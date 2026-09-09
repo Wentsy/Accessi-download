@@ -1,0 +1,100 @@
+name: Build Windows portable
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build Accessi-download
+        shell: pwsh
+        run: |
+          msbuild AccessiDownload.csproj /restore /p:Configuration=Release /p:Platform=x64
+
+      - name: Assemble portable package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $package = Join-Path $PWD "dist\Accessi-download"
+          $tools = Join-Path $package "tools"
+          New-Item -ItemType Directory -Force -Path $tools | Out-Null
+
+          $exe = Get-ChildItem -Path "$PWD\bin\Release" -Filter "Accessi-download.exe" -Recurse | Select-Object -First 1
+          if (-not $exe) { throw "Accessi-download.exe was not produced." }
+          Copy-Item $exe.FullName (Join-Path $package "Accessi-download.exe")
+
+          Copy-Item "$PWD\README.md" $package
+          Copy-Item "$PWD\THIRD_PARTY_NOTICES.md" $package
+          Copy-Item "$PWD\docs\ACCESSIBILITY.md" (Join-Path $package "ACCESSIBILITY.md")
+
+          Write-Host "Downloading yt-dlp nightly..."
+          Invoke-WebRequest `
+            -Uri "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp.exe" `
+            -OutFile (Join-Path $package "yt-dlp.exe")
+
+          Write-Host "Downloading Deno..."
+          $denoZip = Join-Path $env:RUNNER_TEMP "deno.zip"
+          $denoExtract = Join-Path $env:RUNNER_TEMP "deno"
+          Invoke-WebRequest `
+            -Uri "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip" `
+            -OutFile $denoZip
+          Expand-Archive -Path $denoZip -DestinationPath $denoExtract -Force
+          $denoExe = Get-ChildItem -Path $denoExtract -Filter "deno.exe" -Recurse | Select-Object -First 1
+          if (-not $denoExe) { throw "deno.exe not found in downloaded archive." }
+          Copy-Item $denoExe.FullName (Join-Path $tools "deno.exe")
+
+          Write-Host "Downloading FFmpeg..."
+          $ffmpegZip = Join-Path $env:RUNNER_TEMP "ffmpeg.zip"
+          $ffmpegExtract = Join-Path $env:RUNNER_TEMP "ffmpeg"
+          Invoke-WebRequest `
+            -Uri "https://github.com/yt-dlp/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip" `
+            -OutFile $ffmpegZip
+          Expand-Archive -Path $ffmpegZip -DestinationPath $ffmpegExtract -Force
+
+          $ffmpegExe = Get-ChildItem -Path $ffmpegExtract -Filter "ffmpeg.exe" -Recurse | Select-Object -First 1
+          $ffprobeExe = Get-ChildItem -Path $ffmpegExtract -Filter "ffprobe.exe" -Recurse | Select-Object -First 1
+          if (-not $ffmpegExe -or -not $ffprobeExe) { throw "FFmpeg binaries not found in downloaded archive." }
+
+          Copy-Item $ffmpegExe.FullName (Join-Path $tools "ffmpeg.exe")
+          Copy-Item $ffprobeExe.FullName (Join-Path $tools "ffprobe.exe")
+
+          Write-Host "Checking packaged components..."
+          & (Join-Path $package "yt-dlp.exe") --version
+          & (Join-Path $tools "ffmpeg.exe") -version | Select-Object -First 1
+          & (Join-Path $tools "ffprobe.exe") -version | Select-Object -First 1
+          & (Join-Path $tools "deno.exe") --version | Select-Object -First 1
+
+          $zip = Join-Path $PWD "dist\Accessi-download-portable-win64.zip"
+          if (Test-Path $zip) { Remove-Item $zip -Force }
+          Compress-Archive -Path "$package\*" -DestinationPath $zip -CompressionLevel Optimal
+
+      - name: Upload portable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Accessi-download-portable-win64
+          path: dist/Accessi-download-portable-win64.zip
+          if-no-files-found: error
+
+      - name: Create GitHub Release for version tags
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: dist/Accessi-download-portable-win64.zip
