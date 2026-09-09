@@ -1,5 +1,5 @@
-using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Windows.Forms;
 
 namespace AccessiDownload
@@ -8,11 +8,7 @@ namespace AccessiDownload
     {
         public string Key { get; set; }
         public string Display { get; set; }
-
-        public override string ToString()
-        {
-            return Display ?? Key ?? string.Empty;
-        }
+        public override string ToString() { return Display ?? Key ?? string.Empty; }
     }
 
     internal sealed class AudioSourceChoice
@@ -22,11 +18,7 @@ namespace AccessiDownload
         public double? Abr { get; set; }
         public string Codec { get; set; }
         public string Extension { get; set; }
-
-        public override string ToString()
-        {
-            return Display ?? FormatId ?? string.Empty;
-        }
+        public override string ToString() { return Display ?? FormatId ?? string.Empty; }
     }
 
     internal sealed class MediaInfo
@@ -40,7 +32,9 @@ namespace AccessiDownload
 
     internal sealed class DownloadRequest
     {
+        // Url remains for the original v0.1 service; Urls is used by the queue/playlist engine.
         public string Url { get; set; }
+        public List<string> Urls { get; set; } = new List<string>();
         public string DownloadFolder { get; set; }
         public bool AudioOnly { get; set; }
         public int? MaxVideoHeight { get; set; }
@@ -48,12 +42,15 @@ namespace AccessiDownload
         public string AudioSourceFormatId { get; set; }
         public string AudioOutputFormat { get; set; }
         public string AudioOutputQuality { get; set; }
+        public bool IncludeMediaId { get; set; }
+        public bool DownloadPlaylist { get; set; }
         public AppSettings Settings { get; set; }
     }
 
     internal sealed class DownloadProgress
     {
         public int Percent { get; set; }
+        public string ItemTitle { get; set; }
         public string PercentText { get; set; }
         public string SpeedText { get; set; }
         public string EtaText { get; set; }
@@ -61,7 +58,17 @@ namespace AccessiDownload
 
     internal sealed class DownloadResult
     {
-        public string FinalPath { get; set; }
+        public List<string> FinalPaths { get; set; } = new List<string>();
+        public string FinalPath
+        {
+            get
+            {
+                if (FinalPaths != null && FinalPaths.Count > 0) return FinalPaths.LastOrDefault();
+                return legacyFinalPath;
+            }
+            set { legacyFinalPath = value; }
+        }
+        private string legacyFinalPath;
     }
 
     internal sealed class AccessibleStatusTextBox : TextBox
