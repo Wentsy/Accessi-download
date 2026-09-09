@@ -36,9 +36,11 @@ jobs:
           $tools = Join-Path $package "tools"
           New-Item -ItemType Directory -Force -Path $tools | Out-Null
 
-          $exe = Get-ChildItem -Path "$PWD\bin\Release" -Filter "Accessi-download.exe" -Recurse | Select-Object -First 1
+          $exe = Get-ChildItem -Path "$PWD\bin" -Filter "Accessi-download.exe" -Recurse | Select-Object -First 1
           if (-not $exe) { throw "Accessi-download.exe was not produced." }
           Copy-Item $exe.FullName (Join-Path $package "Accessi-download.exe")
+          $exeConfig = $exe.FullName + ".config"
+          if (Test-Path $exeConfig) { Copy-Item $exeConfig (Join-Path $package "Accessi-download.exe.config") }
 
           Copy-Item "$PWD\README.md" $package
           Copy-Item "$PWD\THIRD_PARTY_NOTICES.md" $package
