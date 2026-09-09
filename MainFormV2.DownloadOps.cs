@@ -90,50 +90,6 @@ namespace AccessiDownload
                 .ToList();
         }
 
-        private async Task AnalyzeAsync()
-        {
-            List<string> urls = GetInputUrls();
-            if (urls.Count == 0)
-            {
-                MessageBox.Show(this, "請先貼上至少一個影片網址。", "缺少網址", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                txtUrl.Focus();
-                return;
-            }
-            if (!service.HasRequiredComponents())
-            {
-                string summary = service.GetComponentSummary();
-                SetStatus(summary);
-                MessageBox.Show(this, summary, "缺少必要元件", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return;
-            }
-
-            SaveSettingsFromUi();
-            BeginOperation(urls.Count > 1 ? "偵測到 " + urls.Count + " 個網址，正在解析第一個網址…" : "正在解析影片資訊…");
-            try
-            {
-                currentMedia = await service.AnalyzeAsync(urls[0], settings, activeOperation.Token);
-                PopulateMediaChoices(currentMedia);
-                string duration = FormatDuration(currentMedia.DurationSeconds);
-                lblMediaInfo.Text =
-                    (string.IsNullOrWhiteSpace(currentMedia.Title) ? "未取得標題" : currentMedia.Title) +
-                    (string.IsNullOrWhiteSpace(currentMedia.Uploader) ? string.Empty : "；上傳者：" + currentMedia.Uploader) +
-                    (string.IsNullOrWhiteSpace(duration) ? string.Empty : "；長度：" + duration) +
-                    (urls.Count > 1 ? "；批量共 " + urls.Count + " 個網址" : string.Empty);
-                lblMediaInfo.AccessibleName = "影片資訊：" + lblMediaInfo.Text;
-                SetStatus(urls.Count > 1
-                    ? "第一個網址解析完成。已偵測到 " + urls.Count + " 個網址；選好格式後會依序批量下載。"
-                    : "解析完成。請選擇畫質、音質與輸出格式後開始下載。");
-            }
-            catch (OperationCanceledException) { SetStatus("已取消解析。"); }
-            catch (Exception ex)
-            {
-                AppendLog("解析錯誤：" + ex);
-                SetStatus("解析失敗：" + ex.Message);
-                MessageBox.Show(this, ex.Message, "解析失敗", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            }
-            finally { EndOperation(); }
-        }
-
         private async Task DownloadAsync()
         {
             List<string> urls = GetInputUrls();
@@ -167,7 +123,7 @@ namespace AccessiDownload
                 AudioOnly = rbAudio.Checked,
                 MaxVideoHeight = GetSelectedVideoHeight(),
                 VideoContainer = GetSelectedOptionKey(cmbVideoContainer, "mp4"),
-                AudioSourceFormatId = GetSelectedAudioFormatId(),
+                AudioSourceFormatId = "bestaudio/best",
                 AudioOutputFormat = GetSelectedOptionKey(cmbAudioFormat, "m4a"),
                 AudioOutputQuality = GetSelectedOptionKey(cmbAudioQuality, "best"),
                 IncludeMediaId = chkIncludeMediaId.Checked,
@@ -208,21 +164,26 @@ namespace AccessiDownload
                 else if (count == 1) completed = "下載完成：" + result.FinalPath;
                 else completed = "下載完成。";
 
+                if (count > 0)
+                {
+                    txtUrl.Clear();
+                    completed += " 網址已自動清除。";
+                }
+
                 SetStatus(completed);
                 AppendLog(completed);
 
-                // The persistent checkbox replaces the old Yes/No completion dialog.
                 if (settings.OpenFolderAfterDownload) OpenCompletedFolder(result);
             }
             catch (OperationCanceledException)
             {
-                SetStatus("已取消下載。尚未完成的暫存檔可能會由 yt-dlp 留在下載資料夾中。");
+                SetStatus("已取消下載。網址已保留，可直接重試；尚未完成的暫存檔可能會由 yt-dlp 留在下載資料夾中。");
             }
             catch (Exception ex)
             {
                 AppendLog("下載錯誤：" + ex);
-                SetStatus("下載失敗：" + ex.Message);
-                MessageBox.Show(this, ex.Message + "\r\n\r\n詳細資訊可在「記錄」分頁查看。", "下載失敗", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                SetStatus("下載失敗，網址已保留：" + ex.Message);
+                MessageBox.Show(this, ex.Message + "\r\n\r\n網址會保留在編輯區，可直接重試。詳細資訊可在「記錄」分頁查看。", "下載失敗", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             finally { EndOperation(); }
         }

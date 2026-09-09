@@ -1,11 +1,5 @@
 using System;
-using System.Collections.Generic;
-using System.Diagnostics;
 using System.Drawing;
-using System.IO;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace AccessiDownload
@@ -20,7 +14,7 @@ namespace AccessiDownload
                 AutoScroll = true,
                 Padding = new Padding(14),
                 ColumnCount = 3,
-                RowCount = 15
+                RowCount = 14
             };
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
@@ -35,24 +29,22 @@ namespace AccessiDownload
                 AcceptsReturn = true,
                 MinimumSize = new Size(0, 64),
                 AccessibleName = "影片網址，可一行一個網址",
-                AccessibleDescription = "可貼上單一網址，或每行貼一個 YouTube、Bilibili 或其他 yt-dlp 支援網址。解析按鈕只解析第一個網址，下載時會依序處理全部網址。"
+                AccessibleDescription = "可貼上單一網址，或每行貼一個 YouTube、Bilibili 或其他 yt-dlp 支援網址。下載成功後會自動清空；下載失敗或取消時會保留網址方便重試。"
             };
-            btnAnalyze = new Button { Text = "解析第一個網址 (&A)", AutoSize = true, AccessibleName = "解析第一個網址的影片資訊" };
-            btnAnalyze.Click += async (s, e) => await AnalyzeAsync();
             layout.Controls.Add(lblUrl, 0, 0);
             layout.Controls.Add(txtUrl, 1, 0);
-            layout.Controls.Add(btnAnalyze, 2, 0);
+            layout.SetColumnSpan(txtUrl, 2);
 
-            lblMediaInfo = new Label
+            var tip = new Label
             {
-                Text = "尚未解析影片。貼上網址後按「解析第一個網址」。",
+                Text = "可直接開始下載，不需要先取得影片資訊。畫質選項代表上限，yt-dlp 會自動挑選符合條件的最佳來源。",
                 AutoSize = true,
                 Dock = DockStyle.Fill,
-                Padding = new Padding(0, 7, 0, 7),
-                AccessibleName = "影片資訊"
+                Padding = new Padding(0, 4, 0, 6),
+                AccessibleName = "下載說明：可直接開始下載，不需要先取得影片資訊。"
             };
-            layout.Controls.Add(lblMediaInfo, 1, 1);
-            layout.SetColumnSpan(lblMediaInfo, 2);
+            layout.Controls.Add(tip, 1, 1);
+            layout.SetColumnSpan(tip, 2);
 
             chkDownloadPlaylist = new CheckBox
             {
@@ -77,8 +69,20 @@ namespace AccessiDownload
             layout.SetColumnSpan(modePanel, 2);
 
             layout.Controls.Add(CreateLabel("影片畫質："), 0, 4);
-            cmbVideoQuality = CreateDropDown("影片畫質");
-            cmbVideoQuality.Items.Add(new OptionItem { Key = "auto", Display = "自動（最佳可用畫質）" });
+            cmbVideoQuality = CreateDropDown("影片畫質上限");
+            cmbVideoQuality.Items.AddRange(new object[]
+            {
+                new OptionItem { Key = "auto", Display = "自動（最佳可用畫質）" },
+                new OptionItem { Key = "4320", Display = "最高 4320p / 8K" },
+                new OptionItem { Key = "2160", Display = "最高 2160p / 4K" },
+                new OptionItem { Key = "1440", Display = "最高 1440p" },
+                new OptionItem { Key = "1080", Display = "最高 1080p" },
+                new OptionItem { Key = "720", Display = "最高 720p" },
+                new OptionItem { Key = "480", Display = "最高 480p" },
+                new OptionItem { Key = "360", Display = "最高 360p" },
+                new OptionItem { Key = "240", Display = "最高 240p" },
+                new OptionItem { Key = "144", Display = "最高 144p" }
+            });
             cmbVideoQuality.SelectedIndex = 0;
             cmbVideoQuality.SelectedIndexChanged += (s, e) => SaveSettingsFromUi();
             layout.Controls.Add(cmbVideoQuality, 1, 4);
@@ -98,14 +102,7 @@ namespace AccessiDownload
             layout.Controls.Add(cmbVideoContainer, 1, 5);
             layout.SetColumnSpan(cmbVideoContainer, 2);
 
-            layout.Controls.Add(CreateLabel("來源音質："), 0, 6);
-            cmbAudioSource = CreateDropDown("來源音訊品質");
-            cmbAudioSource.Items.Add(new AudioSourceChoice { FormatId = "bestaudio/best", Display = "自動（最佳可用音質）" });
-            cmbAudioSource.SelectedIndex = 0;
-            layout.Controls.Add(cmbAudioSource, 1, 6);
-            layout.SetColumnSpan(cmbAudioSource, 2);
-
-            layout.Controls.Add(CreateLabel("音訊格式："), 0, 7);
+            layout.Controls.Add(CreateLabel("音訊格式："), 0, 6);
             cmbAudioFormat = CreateDropDown("音訊輸出格式");
             cmbAudioFormat.Items.AddRange(new object[]
             {
@@ -120,10 +117,10 @@ namespace AccessiDownload
                 new OptionItem { Key = "best", Display = "保留最佳來源格式" }
             });
             cmbAudioFormat.SelectedIndexChanged += (s, e) => { UpdateAudioQualityControl(); SaveSettingsFromUi(); };
-            layout.Controls.Add(cmbAudioFormat, 1, 7);
+            layout.Controls.Add(cmbAudioFormat, 1, 6);
             layout.SetColumnSpan(cmbAudioFormat, 2);
 
-            layout.Controls.Add(CreateLabel("輸出音質："), 0, 8);
+            layout.Controls.Add(CreateLabel("音訊品質："), 0, 7);
             cmbAudioQuality = CreateDropDown("音訊輸出品質");
             cmbAudioQuality.Items.AddRange(new object[]
             {
@@ -138,7 +135,7 @@ namespace AccessiDownload
             });
             cmbAudioQuality.SelectedIndex = 0;
             cmbAudioQuality.SelectedIndexChanged += (s, e) => SaveSettingsFromUi();
-            layout.Controls.Add(cmbAudioQuality, 1, 8);
+            layout.Controls.Add(cmbAudioQuality, 1, 7);
             layout.SetColumnSpan(cmbAudioQuality, 2);
 
             chkIncludeMediaId = new CheckBox
@@ -148,8 +145,8 @@ namespace AccessiDownload
                 AccessibleName = "檔名加入影片 ID，預設關閉"
             };
             chkIncludeMediaId.CheckedChanged += (s, e) => SaveSettingsFromUi();
-            layout.Controls.Add(CreateLabel("檔名："), 0, 9);
-            layout.Controls.Add(chkIncludeMediaId, 1, 9);
+            layout.Controls.Add(CreateLabel("檔名："), 0, 8);
+            layout.Controls.Add(chkIncludeMediaId, 1, 8);
             layout.SetColumnSpan(chkIncludeMediaId, 2);
 
             chkOpenFolderAfterDownload = new CheckBox
@@ -159,17 +156,17 @@ namespace AccessiDownload
                 AccessibleName = "下載完成後自動開啟資料夾"
             };
             chkOpenFolderAfterDownload.CheckedChanged += (s, e) => SaveSettingsFromUi();
-            layout.Controls.Add(CreateLabel("完成後："), 0, 10);
-            layout.Controls.Add(chkOpenFolderAfterDownload, 1, 10);
+            layout.Controls.Add(CreateLabel("完成後："), 0, 9);
+            layout.Controls.Add(chkOpenFolderAfterDownload, 1, 9);
             layout.SetColumnSpan(chkOpenFolderAfterDownload, 2);
 
-            layout.Controls.Add(CreateLabel("儲存位置 (&F)："), 0, 11);
+            layout.Controls.Add(CreateLabel("儲存位置 (&F)："), 0, 10);
             txtDownloadFolder = new TextBox { Dock = DockStyle.Fill, AccessibleName = "下載後儲存位置" };
             txtDownloadFolder.Leave += (s, e) => SaveSettingsFromUi();
             btnBrowseFolder = new Button { Text = "瀏覽 (&B)", AutoSize = true, AccessibleName = "選擇下載資料夾" };
             btnBrowseFolder.Click += (s, e) => BrowseDownloadFolder();
-            layout.Controls.Add(txtDownloadFolder, 1, 11);
-            layout.Controls.Add(btnBrowseFolder, 2, 11);
+            layout.Controls.Add(txtDownloadFolder, 1, 10);
+            layout.Controls.Add(btnBrowseFolder, 2, 10);
 
             var actionPanel = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, WrapContents = true };
             btnDownload = new Button { Text = "開始下載 (&D)", AutoSize = true, AccessibleName = "開始下載" };
@@ -181,13 +178,13 @@ namespace AccessiDownload
             actionPanel.Controls.Add(btnDownload);
             actionPanel.Controls.Add(btnCancel);
             actionPanel.Controls.Add(btnOpenFolder);
-            layout.Controls.Add(CreateLabel("操作："), 0, 12);
-            layout.Controls.Add(actionPanel, 1, 12);
+            layout.Controls.Add(CreateLabel("操作："), 0, 11);
+            layout.Controls.Add(actionPanel, 1, 11);
             layout.SetColumnSpan(actionPanel, 2);
 
             progressBar = new ProgressBar { Dock = DockStyle.Fill, Minimum = 0, Maximum = 100, AccessibleName = "目前項目下載進度" };
-            layout.Controls.Add(CreateLabel("進度："), 0, 13);
-            layout.Controls.Add(progressBar, 1, 13);
+            layout.Controls.Add(CreateLabel("進度："), 0, 12);
+            layout.Controls.Add(progressBar, 1, 12);
             layout.SetColumnSpan(progressBar, 2);
 
             txtStatus = new AccessibleStatusTextBox
@@ -197,10 +194,10 @@ namespace AccessiDownload
                 TabStop = true,
                 Text = "就緒。",
                 AccessibleName = "狀態：就緒。",
-                AccessibleDescription = "顯示目前解析、下載或更新狀態。"
+                AccessibleDescription = "顯示目前下載、取消或更新狀態。"
             };
-            layout.Controls.Add(CreateLabel("狀態："), 0, 14);
-            layout.Controls.Add(txtStatus, 1, 14);
+            layout.Controls.Add(CreateLabel("狀態："), 0, 13);
+            layout.Controls.Add(txtStatus, 1, 13);
             layout.SetColumnSpan(txtStatus, 2);
 
             for (int i = 0; i < layout.RowCount; i++) layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));

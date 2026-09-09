@@ -22,7 +22,6 @@ namespace AccessiDownload
         public bool HasRequiredComponents() { return legacy.HasRequiredComponents(); }
         public Task<string> GetVersionAsync(CancellationToken token) { return legacy.GetVersionAsync(token); }
         public Task<string> UpdateAsync(string channel, Action<string> log, CancellationToken token) { return legacy.UpdateAsync(channel, log, token); }
-        public Task<MediaInfo> AnalyzeAsync(string url, AppSettings settings, CancellationToken token) { return legacy.AnalyzeAsync(url, settings, token); }
 
         public async Task<DownloadResult> DownloadAsync(DownloadRequest request, Action<DownloadProgress> progress, Action<string> log, CancellationToken token)
         {
@@ -49,7 +48,7 @@ namespace AccessiDownload
             args.Add("--print");
             args.Add("after_move:RESULT|%(filepath)s");
 
-            if (request.AudioOnly) BuildAudioArguments(args, request, urls.Count);
+            if (request.AudioOnly) BuildAudioArguments(args, request);
             else BuildVideoArguments(args, request);
             args.AddRange(urls);
 
@@ -102,11 +101,25 @@ namespace AccessiDownload
 
         private static void BuildVideoArguments(List<string> args, DownloadRequest request)
         {
-            args.Add("-f"); args.Add("bv*+ba/b");
+            int? height = request.MaxVideoHeight;
+            args.Add("-f");
+            if (height.HasValue)
+            {
+                string h = height.Value.ToString(CultureInfo.InvariantCulture);
+                args.Add("bv*[height<=" + h + "]+ba/b[height<=" + h + "]");
+            }
+            else
+            {
+                args.Add("bv*+ba/b");
+            }
+
             var sort = new List<string>();
-            if (request.MaxVideoHeight.HasValue) sort.Add("res:" + request.MaxVideoHeight.Value.ToString(CultureInfo.InvariantCulture));
             string container = (request.VideoContainer ?? "auto").ToLowerInvariant();
-            if (container == "mp4" || container == "mov") { sort.Add("vcodec:h264"); sort.Add("acodec:aac"); }
+            if (container == "mp4" || container == "mov")
+            {
+                sort.Add("vcodec:h264");
+                sort.Add("acodec:aac");
+            }
             if (sort.Count > 0) { args.Add("-S"); args.Add(string.Join(",", sort)); }
             if (container == "mp4" || container == "mkv" || container == "webm" || container == "mov")
             {
@@ -116,10 +129,9 @@ namespace AccessiDownload
             args.Add("--embed-metadata");
         }
 
-        private static void BuildAudioArguments(List<string> args, DownloadRequest request, int urlCount)
+        private static void BuildAudioArguments(List<string> args, DownloadRequest request)
         {
-            string source = (request.DownloadPlaylist || urlCount > 1) ? "bestaudio/best" : request.AudioSourceFormatId;
-            args.Add("-f"); args.Add(string.IsNullOrWhiteSpace(source) ? "bestaudio/best" : source);
+            args.Add("-f"); args.Add("bestaudio/best");
             args.Add("-x"); args.Add("--audio-format");
             string format = string.IsNullOrWhiteSpace(request.AudioOutputFormat) ? "m4a" : request.AudioOutputFormat;
             args.Add(format);

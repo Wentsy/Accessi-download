@@ -1,9 +1,5 @@
 using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Drawing;
 using System.IO;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -63,36 +59,9 @@ namespace AccessiDownload
             }
         }
 
-        private void PopulateMediaChoices(MediaInfo media)
-        {
-            string wantedQuality = settings.VideoQuality;
-            cmbVideoQuality.BeginUpdate();
-            try
-            {
-                cmbVideoQuality.Items.Clear();
-                cmbVideoQuality.Items.Add(new OptionItem { Key = "auto", Display = "自動（最佳可用畫質）" });
-                foreach (int height in media.VideoHeights)
-                    cmbVideoQuality.Items.Add(new OptionItem { Key = height.ToString(), Display = height + "p 或以下" });
-                SelectByKey(cmbVideoQuality, wantedQuality, "auto");
-            }
-            finally { cmbVideoQuality.EndUpdate(); }
-
-            cmbAudioSource.BeginUpdate();
-            try
-            {
-                cmbAudioSource.Items.Clear();
-                foreach (AudioSourceChoice choice in media.AudioSources) cmbAudioSource.Items.Add(choice);
-                if (cmbAudioSource.Items.Count == 0)
-                    cmbAudioSource.Items.Add(new AudioSourceChoice { FormatId = "bestaudio/best", Display = "自動（最佳可用音質）" });
-                cmbAudioSource.SelectedIndex = 0;
-            }
-            finally { cmbAudioSource.EndUpdate(); }
-        }
-
         private void BeginOperation(string status)
         {
             activeOperation = new CancellationTokenSource();
-            btnAnalyze.Enabled = false;
             btnDownload.Enabled = false;
             btnUpdate.Enabled = false;
             btnCancel.Enabled = true;
@@ -107,7 +76,6 @@ namespace AccessiDownload
                 activeOperation.Dispose();
                 activeOperation = null;
             }
-            btnAnalyze.Enabled = true;
             btnDownload.Enabled = true;
             btnUpdate.Enabled = true;
             btnCancel.Enabled = false;

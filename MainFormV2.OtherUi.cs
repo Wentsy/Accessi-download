@@ -31,7 +31,7 @@ namespace AccessiDownload
                 AutoSize = true,
                 Dock = DockStyle.Fill,
                 MaximumSize = new Size(780, 0),
-                Text = "YouTube 或 Bilibili 若需要登入，先在平常使用的瀏覽器完成登入，再讓 Accessi-download 直接讀取該瀏覽器的 Cookie。程式不會要求你輸入帳號密碼。",
+                Text = "YouTube、Bilibili 或 Douyin 若需要登入或 Cookie，先在平常使用的瀏覽器開啟網站，再讓 Accessi-download 直接讀取該瀏覽器的 Cookie。程式不會要求你輸入帳號密碼。",
                 AccessibleName = "登入說明"
             };
             layout.Controls.Add(intro, 0, 0);
@@ -66,10 +66,13 @@ namespace AccessiDownload
             var loginPanel = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, WrapContents = true };
             var btnYouTubeLogin = new Button { Text = "開啟 YouTube 登入頁", AutoSize = true, AccessibleName = "在瀏覽器開啟 YouTube 登入頁" };
             var btnBilibiliLogin = new Button { Text = "開啟 Bilibili 登入頁", AutoSize = true, AccessibleName = "在瀏覽器開啟 Bilibili 登入頁" };
+            var btnDouyinLogin = new Button { Text = "開啟 Douyin", AutoSize = true, AccessibleName = "在瀏覽器開啟抖音 Douyin" };
             btnYouTubeLogin.Click += (s, e) => OpenWebPage("https://accounts.google.com/ServiceLogin?service=youtube");
             btnBilibiliLogin.Click += (s, e) => OpenWebPage("https://passport.bilibili.com/login");
+            btnDouyinLogin.Click += (s, e) => OpenWebPage("https://www.douyin.com/");
             loginPanel.Controls.Add(btnYouTubeLogin);
             loginPanel.Controls.Add(btnBilibiliLogin);
+            loginPanel.Controls.Add(btnDouyinLogin);
             layout.Controls.Add(CreateLabel("登入頁："), 0, 3);
             layout.Controls.Add(loginPanel, 1, 3);
             layout.SetColumnSpan(loginPanel, 2);
@@ -79,7 +82,7 @@ namespace AccessiDownload
                 AutoSize = true,
                 Dock = DockStyle.Fill,
                 MaximumSize = new Size(780, 0),
-                Text = "提示：若瀏覽器 Cookie 讀取失敗，可以先完全關閉該瀏覽器後再解析；也可改用 Netscape 格式的 cookies.txt。Cookie 檔案請自行妥善保管，不要上傳到公開位置。",
+                Text = "提示：Douyin 可能需要新鮮的瀏覽器 Cookie；若讀取失敗，可以先在瀏覽器開啟抖音，再完全關閉瀏覽器後重試。也可改用 Netscape 格式的 cookies.txt。Cookie 檔案請自行妥善保管，不要上傳到公開位置。",
                 AccessibleName = "Cookie 使用提示"
             };
             layout.Controls.Add(cookieTip, 0, 4);

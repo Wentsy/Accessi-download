@@ -13,7 +13,6 @@ namespace AccessiDownload
             bool video = rbVideo.Checked;
             cmbVideoQuality.Enabled = video;
             cmbVideoContainer.Enabled = video;
-            cmbAudioSource.Enabled = !video;
             cmbAudioFormat.Enabled = !video;
             cmbAudioQuality.Enabled = !video && AudioQualityIsApplicable();
         }
@@ -112,12 +111,6 @@ namespace AccessiDownload
             return int.TryParse(item.Key, out value) ? (int?)value : null;
         }
 
-        private string GetSelectedAudioFormatId()
-        {
-            AudioSourceChoice item = cmbAudioSource.SelectedItem as AudioSourceChoice;
-            return item == null || string.IsNullOrWhiteSpace(item.FormatId) ? "bestaudio/best" : item.FormatId;
-        }
-
         private static string GetSelectedOptionKey(ComboBox combo, string fallback)
         {
             if (combo == null) return fallback;
@@ -139,14 +132,6 @@ namespace AccessiDownload
                 }
             }
             if (combo.Items.Count > 0) combo.SelectedIndex = 0;
-        }
-
-        private static string FormatDuration(double seconds)
-        {
-            if (seconds <= 0) return string.Empty;
-            TimeSpan span = TimeSpan.FromSeconds(seconds);
-            if (span.TotalHours >= 1) return ((int)span.TotalHours) + " 小時 " + span.Minutes + " 分 " + span.Seconds + " 秒";
-            return span.Minutes + " 分 " + span.Seconds + " 秒";
         }
 
         private void AppendLog(string text)
@@ -179,13 +164,7 @@ namespace AccessiDownload
 
         private void MainForm_KeyDown(object sender, KeyEventArgs e)
         {
-            if (e.KeyCode == Keys.F5 && activeOperation == null)
-            {
-                e.Handled = true;
-                e.SuppressKeyPress = true;
-                _ = AnalyzeAsync();
-            }
-            else if (e.KeyCode == Keys.Escape && activeOperation != null)
+            if (e.KeyCode == Keys.Escape && activeOperation != null)
             {
                 e.Handled = true;
                 e.SuppressKeyPress = true;

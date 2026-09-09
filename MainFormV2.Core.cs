@@ -15,18 +15,14 @@ namespace AccessiDownload
         private readonly AppSettings settings;
         private readonly YtDlpServiceV2 service;
         private CancellationTokenSource activeOperation;
-        private MediaInfo currentMedia;
         private bool applyingSettings;
 
         private TextBox txtUrl;
-        private Button btnAnalyze;
-        private Label lblMediaInfo;
         private CheckBox chkDownloadPlaylist;
         private RadioButton rbVideo;
         private RadioButton rbAudio;
         private ComboBox cmbVideoQuality;
         private ComboBox cmbVideoContainer;
-        private ComboBox cmbAudioSource;
         private ComboBox cmbAudioFormat;
         private ComboBox cmbAudioQuality;
         private CheckBox chkIncludeMediaId;
@@ -54,8 +50,8 @@ namespace AccessiDownload
             service = new YtDlpServiceV2();
             Text = "Accessi-download";
             StartPosition = FormStartPosition.CenterScreen;
-            MinimumSize = new Size(760, 620);
-            Size = new Size(940, 760);
+            MinimumSize = new Size(760, 600);
+            Size = new Size(940, 730);
             Font = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point);
             KeyPreview = true;
             BuildInterface();
