@@ -1,6 +1,6 @@
-# Acessi-download
+# Accessi-download
 
-YT 和 Bilibili 影片傻瓜式下載工具（希希企劃）。
+YT 和 Bilibili 影片傻瓜式下載工具（希希企劃，與 Accessibilibili 同系列）。
 
 ## 目標
 
