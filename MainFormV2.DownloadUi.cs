@@ -29,7 +29,7 @@ namespace AccessiDownload
                 AcceptsReturn = true,
                 MinimumSize = new Size(0, 64),
                 AccessibleName = "影片網址，可一行一個網址",
-                AccessibleDescription = "可貼上單一網址，或每行貼一個 YouTube、Bilibili 或其他 yt-dlp 支援網址。下載成功後會自動清空；下載失敗或取消時會保留網址方便重試。"
+                AccessibleDescription = "可貼上單一網址，或每行貼一個 YouTube、Bilibili、Douyin 或其他 yt-dlp 支援網址。Ctrl+L 可隨時跳到這裡；Ctrl+Enter 可直接開始下載。下載成功後會自動清空；下載失敗或取消時會保留網址方便重試。"
             };
             layout.Controls.Add(lblUrl, 0, 0);
             layout.Controls.Add(txtUrl, 1, 0);
@@ -169,9 +169,28 @@ namespace AccessiDownload
             layout.Controls.Add(btnBrowseFolder, 2, 10);
 
             var actionPanel = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, WrapContents = true };
-            btnDownload = new Button { Text = "開始下載 (&D)", AutoSize = true, AccessibleName = "開始下載" };
-            btnCancel = new Button { Text = "取消 (&C)", AutoSize = true, Enabled = false, AccessibleName = "取消目前操作" };
-            btnOpenFolder = new Button { Text = "開啟下載資料夾", AutoSize = true, AccessibleName = "開啟下載資料夾" };
+            btnDownload = new Button
+            {
+                Text = "開始下載 (&D)",
+                AutoSize = true,
+                AccessibleName = "開始下載",
+                AccessibleDescription = "可按 Ctrl+Enter 從程式內任何位置開始下載。"
+            };
+            btnCancel = new Button
+            {
+                Text = "取消 (&C)",
+                AutoSize = true,
+                Enabled = false,
+                AccessibleName = "取消目前操作",
+                AccessibleDescription = "下載或更新中可按 Esc 取消。"
+            };
+            btnOpenFolder = new Button
+            {
+                Text = "開啟下載資料夾",
+                AutoSize = true,
+                AccessibleName = "開啟下載資料夾",
+                AccessibleDescription = "可按 Ctrl+Shift+O 開啟下載資料夾。"
+            };
             btnDownload.Click += async (s, e) => await DownloadAsync();
             btnCancel.Click += (s, e) => CancelActiveOperation();
             btnOpenFolder.Click += (s, e) => OpenDownloadFolder();
@@ -182,10 +201,25 @@ namespace AccessiDownload
             layout.Controls.Add(actionPanel, 1, 11);
             layout.SetColumnSpan(actionPanel, 2);
 
-            progressBar = new ProgressBar { Dock = DockStyle.Fill, Minimum = 0, Maximum = 100, AccessibleName = "目前項目下載進度" };
+            progressBar = new ProgressBar
+            {
+                Dock = DockStyle.Fill,
+                Minimum = 0,
+                Maximum = 100,
+                AccessibleName = "目前項目下載進度 0%",
+                AccessibleDescription = "下載中可按 Ctrl+J 跳到狀態欄，聽取目前百分比、速度與剩餘時間。"
+            };
+            lblProgressPercent = new Label
+            {
+                Text = "0%",
+                AutoSize = true,
+                Anchor = AnchorStyles.Left,
+                Padding = new Padding(10, 5, 0, 5),
+                AccessibleName = "目前項目下載進度：0%"
+            };
             layout.Controls.Add(CreateLabel("進度："), 0, 12);
             layout.Controls.Add(progressBar, 1, 12);
-            layout.SetColumnSpan(progressBar, 2);
+            layout.Controls.Add(lblProgressPercent, 2, 12);
 
             txtStatus = new AccessibleStatusTextBox
             {
@@ -194,7 +228,7 @@ namespace AccessiDownload
                 TabStop = true,
                 Text = "就緒。",
                 AccessibleName = "狀態：就緒。",
-                AccessibleDescription = "顯示目前下載、取消或更新狀態。"
+                AccessibleDescription = "顯示目前下載、取消或更新狀態。下載中按 Ctrl+J 可直接跳到這裡聽取目前進度。"
             };
             layout.Controls.Add(CreateLabel("狀態："), 0, 13);
             layout.Controls.Add(txtStatus, 1, 13);
