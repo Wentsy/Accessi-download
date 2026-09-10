@@ -146,13 +146,9 @@ namespace AccessiDownload
 
         private void SetStatus(string status) { BeginInvokeIfRequired(() => txtStatus.Announce(status)); }
 
-        private void SetProgressStatus(string status, bool announce)
+        private void AppendStatus(string status)
         {
-            BeginInvokeIfRequired(() =>
-            {
-                if (announce) txtStatus.AnnounceProgress(status);
-                else txtStatus.SetMessage(status);
-            });
+            BeginInvokeIfRequired(() => txtStatus.AppendAnnouncement(status));
         }
 
         private void ResetProgressDisplay()
@@ -178,7 +174,10 @@ namespace AccessiDownload
             progressBar.AccessibleName = "目前項目下載進度 " + percentText;
             lblProgressPercent.Text = percentText;
             lblProgressPercent.AccessibleName = "目前項目下載進度：" + percentText;
-            SetProgressStatus(status, announce);
+
+            // Keep exact visual progress updating continuously, but only append milestone
+            // text to the status editor roughly every 10 percent to avoid flooding NVDA.
+            if (announce) AppendStatus(status);
         }
 
         private void CompleteProgressDisplay()
@@ -205,7 +204,9 @@ namespace AccessiDownload
             if (tabs != null) tabs.SelectedIndex = 0;
             if (txtStatus == null) return;
             txtStatus.Focus();
-            txtStatus.SelectAll();
+            txtStatus.SelectionStart = txtStatus.TextLength;
+            txtStatus.SelectionLength = 0;
+            txtStatus.ScrollToCaret();
         }
 
         private void SwitchToTab(int index)
