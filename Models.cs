@@ -1,7 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows.Forms;
-using System.Windows.Forms.Automation;
 
 namespace AccessiDownload
 {
@@ -79,6 +78,7 @@ namespace AccessiDownload
             Text = message ?? string.Empty;
             AccessibleName = "狀態：" + Text;
             SelectionStart = TextLength;
+            ScrollToCaret();
         }
 
         public void Announce(string message)
@@ -87,27 +87,20 @@ namespace AccessiDownload
             AccessibilityNotifyClients(AccessibleEvents.NameChange, -1);
         }
 
-        public void AnnounceProgress(string message)
+        public void AppendAnnouncement(string message)
         {
-            SetMessage(message);
+            string line = message ?? string.Empty;
+            if (line.Length == 0) return;
 
-            bool notificationRaised = false;
-            try
-            {
-                notificationRaised = AccessibilityObject.RaiseAutomationNotification(
-                    AutomationNotificationKind.Other,
-                    AutomationNotificationProcessing.ImportantMostRecent,
-                    message ?? string.Empty);
-            }
-            catch
-            {
-                // Older Windows accessibility stacks may not expose UI Automation notifications.
-            }
+            if (TextLength > 0 && !Text.EndsWith("\r\n")) AppendText(System.Environment.NewLine);
+            AppendText(line);
+            SelectionStart = TextLength;
+            ScrollToCaret();
 
-            if (!notificationRaised)
-            {
-                AccessibilityNotifyClients(AccessibleEvents.SystemAlert, -1);
-            }
+            // NameChange is intentionally used here because NVDA already announces
+            // the same event reliably for start/completion status messages.
+            AccessibleName = "狀態：" + line;
+            AccessibilityNotifyClients(AccessibleEvents.NameChange, -1);
         }
     }
 }
