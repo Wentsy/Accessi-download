@@ -75,6 +75,14 @@ namespace AccessiDownload
 
     internal sealed class AccessibleStatusTextBox : TextBox
     {
+        public AccessibleStatusTextBox()
+        {
+            Multiline = true;
+            ScrollBars = ScrollBars.Vertical;
+            WordWrap = true;
+            MinimumSize = new System.Drawing.Size(0, 88);
+        }
+
         public void SetMessage(string message)
         {
             Text = message ?? string.Empty;
