@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows.Forms;
+using System.Windows.Forms.Automation;
 
 namespace AccessiDownload
 {
@@ -89,7 +90,24 @@ namespace AccessiDownload
         public void AnnounceProgress(string message)
         {
             SetMessage(message);
-            AccessibilityNotifyClients(AccessibleEvents.ValueChange, -1);
+
+            bool notificationRaised = false;
+            try
+            {
+                notificationRaised = AccessibilityObject.RaiseAutomationNotification(
+                    AutomationNotificationKind.Other,
+                    AutomationNotificationProcessing.ImportantMostRecent,
+                    message ?? string.Empty);
+            }
+            catch
+            {
+                // Older Windows accessibility stacks may not expose UI Automation notifications.
+            }
+
+            if (!notificationRaised)
+            {
+                AccessibilityNotifyClients(AccessibleEvents.SystemAlert, -1);
+            }
         }
     }
 }
