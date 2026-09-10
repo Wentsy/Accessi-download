@@ -17,6 +17,7 @@ namespace AccessiDownload
         private CancellationTokenSource activeOperation;
         private bool applyingSettings;
 
+        private TabControl tabs;
         private TextBox txtUrl;
         private CheckBox chkDownloadPlaylist;
         private RadioButton rbVideo;
@@ -33,6 +34,7 @@ namespace AccessiDownload
         private Button btnDownload;
         private Button btnCancel;
         private ProgressBar progressBar;
+        private Label lblProgressPercent;
         private AccessibleStatusTextBox txtStatus;
         private ComboBox cmbCookieSource;
         private TextBox txtCookieFile;
@@ -64,7 +66,12 @@ namespace AccessiDownload
 
         private void BuildInterface()
         {
-            var tabs = new TabControl { Dock = DockStyle.Fill, AccessibleName = "Accessi-download 功能分頁" };
+            tabs = new TabControl
+            {
+                Dock = DockStyle.Fill,
+                AccessibleName = "Accessi-download 功能分頁",
+                AccessibleDescription = "Ctrl+1 下載，Ctrl+2 登入與更新，Ctrl+3 記錄。"
+            };
             var downloadTab = new TabPage("下載");
             var authTab = new TabPage("登入與更新");
             var logTab = new TabPage("記錄");
