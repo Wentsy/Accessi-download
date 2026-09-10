@@ -211,8 +211,8 @@ namespace AccessiDownload
                 BeginOperation("開始下載" + operationText + "…");
 
             ResetProgressDisplay();
-            int lastAnnouncedPercent = -10;
-            string lastProgressItem = null;
+            int lastAnnouncedPercent = -1;
+            string lastProgressItemKey = null;
 
             try
             {
@@ -221,19 +221,38 @@ namespace AccessiDownload
                     progress => BeginInvokeIfRequired(() =>
                     {
                         int currentPercent = Math.Max(0, Math.Min(100, progress.Percent));
-                        string currentItem = progress.ItemTitle ?? string.Empty;
-                        if (!string.Equals(lastProgressItem, currentItem, StringComparison.Ordinal))
+                        string currentItemKey =
+                            (progress.ItemIndex.HasValue ? progress.ItemIndex.Value.ToString() : "") + "/" +
+                            (progress.ItemTotal.HasValue ? progress.ItemTotal.Value.ToString() : "") + "|" +
+                            (progress.ItemTitle ?? string.Empty);
+
+                        if (!string.Equals(lastProgressItemKey, currentItemKey, StringComparison.Ordinal))
                         {
-                            lastProgressItem = currentItem;
-                            lastAnnouncedPercent = -10;
+                            lastProgressItemKey = currentItemKey;
+                            lastAnnouncedPercent = -1;
                         }
 
-                        bool announceProgress = currentPercent >= 100 || currentPercent - lastAnnouncedPercent >= 10;
+                        bool announceProgress = currentPercent >= 100 ||
+                            (currentPercent >= 10 && (lastAnnouncedPercent < 0 || currentPercent - lastAnnouncedPercent >= 10));
                         if (announceProgress) lastAnnouncedPercent = currentPercent;
 
-                        string status = "下載中";
-                        if (!string.IsNullOrWhiteSpace(progress.ItemTitle)) status += "：" + progress.ItemTitle;
-                        status += "，" + (string.IsNullOrWhiteSpace(progress.PercentText) ? progress.Percent + "%" : progress.PercentText.Trim());
+                        string status;
+                        if (progress.ItemIndex.HasValue && progress.ItemTotal.HasValue && progress.ItemTotal.Value > 1)
+                        {
+                            status = "第 " + progress.ItemIndex.Value + "/" + progress.ItemTotal.Value + " 個影片";
+                            if (!string.IsNullOrWhiteSpace(progress.ItemTitle)) status += "：" + progress.ItemTitle;
+                            status += "，下載進度 ";
+                        }
+                        else
+                        {
+                            status = "下載中";
+                            if (!string.IsNullOrWhiteSpace(progress.ItemTitle)) status += "：" + progress.ItemTitle;
+                            status += "，";
+                        }
+
+                        status += string.IsNullOrWhiteSpace(progress.PercentText)
+                            ? progress.Percent + "%"
+                            : progress.PercentText.Trim();
                         if (!string.IsNullOrWhiteSpace(progress.SpeedText)) status += "，速度 " + progress.SpeedText;
                         if (!string.IsNullOrWhiteSpace(progress.EtaText) && !string.Equals(progress.EtaText, "NA", StringComparison.OrdinalIgnoreCase)) status += "，預估剩餘 " + progress.EtaText;
                         UpdateProgressDisplay(progress, status, announceProgress);
@@ -254,19 +273,19 @@ namespace AccessiDownload
                     completed += " 網址已自動清除。";
                 }
 
-                SetStatus(completed);
+                AppendStatus(completed);
                 AppendLog(completed);
 
                 if (settings.OpenFolderAfterDownload) OpenCompletedFolder(result);
             }
             catch (OperationCanceledException)
             {
-                SetStatus("已取消下載。網址已保留，可直接重試；尚未完成的暫存檔可能會由 yt-dlp 留在下載資料夾中。");
+                AppendStatus("已取消下載。網址已保留，可直接重試；尚未完成的暫存檔可能會由 yt-dlp 留在下載資料夾中。");
             }
             catch (Exception ex)
             {
                 AppendLog("下載錯誤：" + ex);
-                SetStatus("下載失敗，網址已保留：" + ex.Message);
+                AppendStatus("下載失敗，網址已保留：" + ex.Message);
                 MessageBox.Show(this, ex.Message + "\r\n\r\n網址會保留在編輯區，可直接重試。詳細資訊可在「記錄」分頁查看。", "下載失敗", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             finally { EndOperation(); }
