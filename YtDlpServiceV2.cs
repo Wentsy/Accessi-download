@@ -47,6 +47,9 @@ namespace AccessiDownload
             args.Add("download:PROGRESS|%(info.title)s|%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s|%(info.playlist_index)s|%(info.playlist_count)s");
             args.Add("--print");
             args.Add("after_move:RESULT|%(filepath)s");
+            // --print implies yt-dlp quiet mode. Explicit --progress keeps custom
+            // progress-template output enabled even while quiet mode is active.
+            args.Add("--progress");
 
             if (request.AudioOnly) BuildAudioArguments(args, request);
             else BuildVideoArguments(args, request);
