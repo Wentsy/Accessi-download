@@ -233,67 +233,71 @@ namespace AccessiDownload
             return new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill, AccessibleName = accessibleName, IntegralHeight = true };
         }
 
-        private static void ConsumeShortcut(KeyEventArgs e)
+        private bool HandleApplicationShortcut(Keys keyData)
         {
-            e.Handled = true;
-            e.SuppressKeyPress = true;
+            if (keyData == (Keys.Control | Keys.L))
+            {
+                FocusUrlEditor();
+                return true;
+            }
+
+            if (keyData == (Keys.Control | Keys.Enter))
+            {
+                if (activeOperation == null) _ = DownloadAsync();
+                return true;
+            }
+
+            if (keyData == (Keys.Control | Keys.J))
+            {
+                FocusCurrentStatus();
+                return true;
+            }
+
+            if (keyData == (Keys.Control | Keys.Shift | Keys.O))
+            {
+                OpenDownloadFolder();
+                return true;
+            }
+
+            if (keyData == (Keys.Control | Keys.D1) || keyData == (Keys.Control | Keys.NumPad1))
+            {
+                SwitchToTab(0);
+                return true;
+            }
+
+            if (keyData == (Keys.Control | Keys.D2) || keyData == (Keys.Control | Keys.NumPad2))
+            {
+                SwitchToTab(1);
+                return true;
+            }
+
+            if (keyData == (Keys.Control | Keys.D3) || keyData == (Keys.Control | Keys.NumPad3))
+            {
+                SwitchToTab(2);
+                return true;
+            }
+
+            if (keyData == Keys.Escape && activeOperation != null)
+            {
+                CancelActiveOperation();
+                return true;
+            }
+
+            return false;
+        }
+
+        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+        {
+            if (HandleApplicationShortcut(keyData)) return true;
+            return base.ProcessCmdKey(ref msg, keyData);
         }
 
         private void MainForm_KeyDown(object sender, KeyEventArgs e)
         {
-            if (e.Control && !e.Alt && !e.Shift && e.KeyCode == Keys.L)
+            if (HandleApplicationShortcut(e.KeyData))
             {
-                ConsumeShortcut(e);
-                FocusUrlEditor();
-                return;
-            }
-
-            if (e.Control && !e.Alt && !e.Shift && e.KeyCode == Keys.Enter)
-            {
-                ConsumeShortcut(e);
-                if (activeOperation == null) _ = DownloadAsync();
-                return;
-            }
-
-            if (e.Control && !e.Alt && !e.Shift && e.KeyCode == Keys.J)
-            {
-                ConsumeShortcut(e);
-                FocusCurrentStatus();
-                return;
-            }
-
-            if (e.Control && !e.Alt && e.Shift && e.KeyCode == Keys.O)
-            {
-                ConsumeShortcut(e);
-                OpenDownloadFolder();
-                return;
-            }
-
-            if (e.Control && !e.Alt && !e.Shift && (e.KeyCode == Keys.D1 || e.KeyCode == Keys.NumPad1))
-            {
-                ConsumeShortcut(e);
-                SwitchToTab(0);
-                return;
-            }
-
-            if (e.Control && !e.Alt && !e.Shift && (e.KeyCode == Keys.D2 || e.KeyCode == Keys.NumPad2))
-            {
-                ConsumeShortcut(e);
-                SwitchToTab(1);
-                return;
-            }
-
-            if (e.Control && !e.Alt && !e.Shift && (e.KeyCode == Keys.D3 || e.KeyCode == Keys.NumPad3))
-            {
-                ConsumeShortcut(e);
-                SwitchToTab(2);
-                return;
-            }
-
-            if (e.KeyCode == Keys.Escape && activeOperation != null)
-            {
-                ConsumeShortcut(e);
-                CancelActiveOperation();
+                e.Handled = true;
+                e.SuppressKeyPress = true;
             }
         }
 
