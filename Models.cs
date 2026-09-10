@@ -73,12 +73,23 @@ namespace AccessiDownload
 
     internal sealed class AccessibleStatusTextBox : TextBox
     {
-        public void Announce(string message)
+        public void SetMessage(string message)
         {
             Text = message ?? string.Empty;
             AccessibleName = "狀態：" + Text;
             SelectionStart = TextLength;
+        }
+
+        public void Announce(string message)
+        {
+            SetMessage(message);
             AccessibilityNotifyClients(AccessibleEvents.NameChange, -1);
+        }
+
+        public void AnnounceProgress(string message)
+        {
+            SetMessage(message);
+            AccessibilityNotifyClients(AccessibleEvents.ValueChange, -1);
         }
     }
 }
