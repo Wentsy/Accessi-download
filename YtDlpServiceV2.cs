@@ -76,8 +76,7 @@ namespace AccessiDownload
 
             if (result.ExitCode != 0)
             {
-                string error = LastUsefulLine(result.StandardError);
-                throw new InvalidOperationException(string.IsNullOrWhiteSpace(error) ? "下載失敗。" : error);
+                throw new InvalidOperationException(FriendlyDownloadError(result.StandardError, request.Settings));
             }
             return new DownloadResult { FinalPaths = paths };
         }
@@ -157,6 +156,43 @@ namespace AccessiDownload
             var browsers = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             { "chrome", "edge", "firefox", "brave", "opera", "vivaldi", "chromium" };
             if (browsers.Contains(source)) { args.Add("--cookies-from-browser"); args.Add(source); }
+        }
+
+        private static string FriendlyDownloadError(string standardError, AppSettings settings)
+        {
+            string raw = standardError ?? string.Empty;
+            string lower = raw.ToLowerInvariant();
+            string source = settings == null ? string.Empty : (settings.CookieSource ?? string.Empty).ToLowerInvariant();
+            string browser = BrowserDisplayName(source);
+
+            if (lower.Contains("could not copy") && lower.Contains("cookie database"))
+            {
+                return "無法讀取 " + browser + " Cookie：瀏覽器仍可能在背景鎖住 Cookie 資料庫。請把 " + browser + " 完全關閉，包含背景執行的程序，再重新按「開始下載」。如果仍失敗，可在「登入與更新」把 Cookie 來源改成 Mozilla Firefox，或改用 cookies.txt。Accessi-download 不會自動關閉你的瀏覽器。";
+            }
+
+            if (lower.Contains("failed to decrypt with dpapi") ||
+                (lower.Contains("nonetype") && lower.Contains("decode") && lower.Contains("cookie")))
+            {
+                return "已找到 " + browser + " Cookie，但 Windows／Chromium 的 Cookie 加密方式讓 yt-dlp 無法解密。這是 yt-dlp 已知的 Chromium Cookie 問題。請優先改用 Mozilla Firefox 的 Cookie，或使用你自行匯出的 cookies.txt，再重新下載。";
+            }
+
+            string last = LastUsefulLine(raw);
+            return string.IsNullOrWhiteSpace(last) ? "下載失敗。" : last;
+        }
+
+        private static string BrowserDisplayName(string source)
+        {
+            switch ((source ?? string.Empty).ToLowerInvariant())
+            {
+                case "chrome": return "Google Chrome";
+                case "edge": return "Microsoft Edge";
+                case "brave": return "Brave";
+                case "opera": return "Opera";
+                case "vivaldi": return "Vivaldi";
+                case "chromium": return "Chromium";
+                case "firefox": return "Mozilla Firefox";
+                default: return "瀏覽器";
+            }
         }
 
         private static DownloadProgress ParseProgress(string line)

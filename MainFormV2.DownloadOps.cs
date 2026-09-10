@@ -90,6 +90,76 @@ namespace AccessiDownload
                 .ToList();
         }
 
+        private bool ConfirmBrowserCookieAccess()
+        {
+            string source = GetSelectedOptionKey(cmbCookieSource, "none");
+            string processName = GetChromiumBrowserProcessName(source);
+            if (string.IsNullOrWhiteSpace(processName) || !IsProcessRunning(processName)) return true;
+
+            string browserName = GetBrowserDisplayName(source);
+            string message =
+                "目前偵測到 " + browserName + " 仍在執行。\r\n\r\n" +
+                "Windows 上的 Chrome／Chromium 系瀏覽器可能會鎖住 Cookie 資料庫，讓 yt-dlp 無法讀取登入資訊。建議先把 " + browserName + " 完全關閉，包含背景執行的程序，再重新按「開始下載」。\r\n\r\n" +
+                "Accessi-download 不會自動關閉瀏覽器，以免影響你正在使用的分頁。\r\n\r\n" +
+                "仍要繼續嘗試嗎？";
+
+            SetStatus("偵測到 " + browserName + " 仍在執行，可能無法讀取 Cookie。建議先完全關閉瀏覽器。 ");
+            DialogResult result = MessageBox.Show(
+                this,
+                message,
+                "瀏覽器 Cookie 可能被鎖定",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning,
+                MessageBoxDefaultButton.Button2);
+            return result == DialogResult.Yes;
+        }
+
+        private static string GetChromiumBrowserProcessName(string source)
+        {
+            switch ((source ?? string.Empty).ToLowerInvariant())
+            {
+                case "chrome": return "chrome";
+                case "edge": return "msedge";
+                case "brave": return "brave";
+                case "opera": return "opera";
+                case "vivaldi": return "vivaldi";
+                case "chromium": return "chromium";
+                default: return null;
+            }
+        }
+
+        private static string GetBrowserDisplayName(string source)
+        {
+            switch ((source ?? string.Empty).ToLowerInvariant())
+            {
+                case "chrome": return "Google Chrome";
+                case "edge": return "Microsoft Edge";
+                case "brave": return "Brave";
+                case "opera": return "Opera";
+                case "vivaldi": return "Vivaldi";
+                case "chromium": return "Chromium";
+                case "firefox": return "Mozilla Firefox";
+                default: return "瀏覽器";
+            }
+        }
+
+        private static bool IsProcessRunning(string processName)
+        {
+            try
+            {
+                Process[] processes = Process.GetProcessesByName(processName);
+                try { return processes.Length > 0; }
+                finally
+                {
+                    foreach (Process process in processes) process.Dispose();
+                }
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         private async Task DownloadAsync()
         {
             List<string> urls = GetInputUrls();
@@ -114,6 +184,7 @@ namespace AccessiDownload
                 MessageBox.Show(this, summary, "缺少必要元件", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
+            if (!ConfirmBrowserCookieAccess()) return;
 
             SaveSettingsFromUi();
             var request = new DownloadRequest
