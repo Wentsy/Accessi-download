@@ -146,6 +146,77 @@ namespace AccessiDownload
 
         private void SetStatus(string status) { BeginInvokeIfRequired(() => txtStatus.Announce(status)); }
 
+        private void SetProgressStatus(string status, bool announce)
+        {
+            BeginInvokeIfRequired(() =>
+            {
+                if (announce) txtStatus.AnnounceProgress(status);
+                else txtStatus.SetMessage(status);
+            });
+        }
+
+        private void ResetProgressDisplay()
+        {
+            BeginInvokeIfRequired(() =>
+            {
+                progressBar.Value = 0;
+                progressBar.AccessibleName = "目前項目下載進度 0%";
+                lblProgressPercent.Text = "0%";
+                lblProgressPercent.AccessibleName = "目前項目下載進度：0%";
+            });
+        }
+
+        private void UpdateProgressDisplay(DownloadProgress progress, string status, bool announce)
+        {
+            if (progress == null) return;
+            int percent = Math.Max(0, Math.Min(100, progress.Percent));
+            string percentText = string.IsNullOrWhiteSpace(progress.PercentText)
+                ? percent + "%"
+                : progress.PercentText.Trim();
+
+            progressBar.Value = percent;
+            progressBar.AccessibleName = "目前項目下載進度 " + percentText;
+            lblProgressPercent.Text = percentText;
+            lblProgressPercent.AccessibleName = "目前項目下載進度：" + percentText;
+            SetProgressStatus(status, announce);
+        }
+
+        private void CompleteProgressDisplay()
+        {
+            BeginInvokeIfRequired(() =>
+            {
+                progressBar.Value = 100;
+                progressBar.AccessibleName = "目前項目下載進度 100%";
+                lblProgressPercent.Text = "100%";
+                lblProgressPercent.AccessibleName = "目前項目下載進度：100%";
+            });
+        }
+
+        private void FocusUrlEditor()
+        {
+            if (tabs != null) tabs.SelectedIndex = 0;
+            if (txtUrl == null) return;
+            txtUrl.Focus();
+            txtUrl.SelectAll();
+        }
+
+        private void FocusCurrentStatus()
+        {
+            if (tabs != null) tabs.SelectedIndex = 0;
+            if (txtStatus == null) return;
+            txtStatus.Focus();
+            txtStatus.SelectAll();
+        }
+
+        private void SwitchToTab(int index)
+        {
+            if (tabs == null || index < 0 || index >= tabs.TabPages.Count) return;
+            tabs.SelectedIndex = index;
+            if (index == 0 && txtUrl != null) txtUrl.Focus();
+            else if (index == 1 && cmbCookieSource != null) cmbCookieSource.Focus();
+            else if (index == 2 && txtLog != null) txtLog.Focus();
+        }
+
         private void BeginInvokeIfRequired(Action action)
         {
             if (IsDisposed) return;
@@ -162,12 +233,66 @@ namespace AccessiDownload
             return new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill, AccessibleName = accessibleName, IntegralHeight = true };
         }
 
+        private static void ConsumeShortcut(KeyEventArgs e)
+        {
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+        }
+
         private void MainForm_KeyDown(object sender, KeyEventArgs e)
         {
+            if (e.Control && !e.Alt && !e.Shift && e.KeyCode == Keys.L)
+            {
+                ConsumeShortcut(e);
+                FocusUrlEditor();
+                return;
+            }
+
+            if (e.Control && !e.Alt && !e.Shift && e.KeyCode == Keys.Enter)
+            {
+                ConsumeShortcut(e);
+                if (activeOperation == null) _ = DownloadAsync();
+                return;
+            }
+
+            if (e.Control && !e.Alt && !e.Shift && e.KeyCode == Keys.J)
+            {
+                ConsumeShortcut(e);
+                FocusCurrentStatus();
+                return;
+            }
+
+            if (e.Control && !e.Alt && e.Shift && e.KeyCode == Keys.O)
+            {
+                ConsumeShortcut(e);
+                OpenDownloadFolder();
+                return;
+            }
+
+            if (e.Control && !e.Alt && !e.Shift && (e.KeyCode == Keys.D1 || e.KeyCode == Keys.NumPad1))
+            {
+                ConsumeShortcut(e);
+                SwitchToTab(0);
+                return;
+            }
+
+            if (e.Control && !e.Alt && !e.Shift && (e.KeyCode == Keys.D2 || e.KeyCode == Keys.NumPad2))
+            {
+                ConsumeShortcut(e);
+                SwitchToTab(1);
+                return;
+            }
+
+            if (e.Control && !e.Alt && !e.Shift && (e.KeyCode == Keys.D3 || e.KeyCode == Keys.NumPad3))
+            {
+                ConsumeShortcut(e);
+                SwitchToTab(2);
+                return;
+            }
+
             if (e.KeyCode == Keys.Escape && activeOperation != null)
             {
-                e.Handled = true;
-                e.SuppressKeyPress = true;
+                ConsumeShortcut(e);
                 CancelActiveOperation();
             }
         }
