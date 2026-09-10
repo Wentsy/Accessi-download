@@ -210,25 +210,38 @@ namespace AccessiDownload
             else
                 BeginOperation("開始下載" + operationText + "…");
 
-            progressBar.Value = 0;
+            ResetProgressDisplay();
+            int lastAnnouncedPercent = -10;
+            string lastProgressItem = null;
+
             try
             {
                 DownloadResult result = await service.DownloadAsync(
                     request,
                     progress => BeginInvokeIfRequired(() =>
                     {
-                        progressBar.Value = Math.Max(0, Math.Min(100, progress.Percent));
+                        int currentPercent = Math.Max(0, Math.Min(100, progress.Percent));
+                        string currentItem = progress.ItemTitle ?? string.Empty;
+                        if (!string.Equals(lastProgressItem, currentItem, StringComparison.Ordinal))
+                        {
+                            lastProgressItem = currentItem;
+                            lastAnnouncedPercent = -10;
+                        }
+
+                        bool announceProgress = currentPercent >= 100 || currentPercent - lastAnnouncedPercent >= 10;
+                        if (announceProgress) lastAnnouncedPercent = currentPercent;
+
                         string status = "下載中";
                         if (!string.IsNullOrWhiteSpace(progress.ItemTitle)) status += "：" + progress.ItemTitle;
-                        status += "，" + (string.IsNullOrWhiteSpace(progress.PercentText) ? progress.Percent + "%" : progress.PercentText);
+                        status += "，" + (string.IsNullOrWhiteSpace(progress.PercentText) ? progress.Percent + "%" : progress.PercentText.Trim());
                         if (!string.IsNullOrWhiteSpace(progress.SpeedText)) status += "，速度 " + progress.SpeedText;
                         if (!string.IsNullOrWhiteSpace(progress.EtaText) && !string.Equals(progress.EtaText, "NA", StringComparison.OrdinalIgnoreCase)) status += "，預估剩餘 " + progress.EtaText;
-                        SetStatus(status);
+                        UpdateProgressDisplay(progress, status, announceProgress);
                     }),
                     AppendLog,
                     activeOperation.Token);
 
-                progressBar.Value = 100;
+                CompleteProgressDisplay();
                 int count = result.FinalPaths.Count;
                 string completed;
                 if (count > 1) completed = "下載完成，共完成 " + count + " 個檔案。";
