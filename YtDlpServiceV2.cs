@@ -91,7 +91,7 @@ namespace AccessiDownload
 
         private List<string> BuildCommonArguments(AppSettings settings)
         {
-            var args = new List<string> { "--ignore-config" };
+            var args = new List<string> { "--ignore-config", "--encoding", "utf-8" };
             if (Directory.Exists(toolsDirectory)) { args.Add("--ffmpeg-location"); args.Add(toolsDirectory); }
             if (File.Exists(DenoPath)) { args.Add("--js-runtimes"); args.Add("deno:" + DenoPath); }
             AddAuthenticationArguments(args, settings);
