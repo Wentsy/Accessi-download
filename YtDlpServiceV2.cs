@@ -44,7 +44,7 @@ namespace AccessiDownload
             args.Add("-P"); args.Add(request.DownloadFolder);
             args.Add("-o"); args.Add(BuildOutputTemplate(request));
             args.Add("--progress-template");
-            args.Add("download:PROGRESS|%(info.title)s|%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s");
+            args.Add("download:PROGRESS|%(info.title)s|%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s|%(info.playlist_index)s|%(info.playlist_count)s");
             args.Add("--print");
             args.Add("after_move:RESULT|%(filepath)s");
 
@@ -58,7 +58,24 @@ namespace AccessiDownload
                 if (string.IsNullOrWhiteSpace(line)) return;
                 if (line.StartsWith("PROGRESS|", StringComparison.Ordinal))
                 {
-                    progress?.Invoke(ParseProgress(line));
+                    DownloadProgress parsed = ParseProgress(line);
+
+                    // For ordinary multi-URL batches, the number of input URLs is the
+                    // reliable total. Each completed file advances the current item.
+                    if (!request.DownloadPlaylist && urls.Count > 1)
+                    {
+                        int completed;
+                        lock (paths) completed = paths.Count;
+                        parsed.ItemIndex = Math.Min(urls.Count, completed + 1);
+                        parsed.ItemTotal = urls.Count;
+                    }
+                    else if (!request.DownloadPlaylist && urls.Count == 1)
+                    {
+                        parsed.ItemIndex = 1;
+                        parsed.ItemTotal = 1;
+                    }
+
+                    progress?.Invoke(parsed);
                     return;
                 }
                 if (line.StartsWith("RESULT|", StringComparison.Ordinal))
@@ -197,7 +214,7 @@ namespace AccessiDownload
 
         private static DownloadProgress ParseProgress(string line)
         {
-            string[] p = line.Split(new[] { '|' }, 5);
+            string[] p = line.Split(new[] { '|' }, 7);
             string percentText = p.Length > 2 ? p[2].Trim() : string.Empty;
             double value;
             double.TryParse(percentText.Replace("%", "").Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out value);
@@ -207,8 +224,23 @@ namespace AccessiDownload
                 PercentText = percentText,
                 SpeedText = p.Length > 3 ? p[3].Trim() : string.Empty,
                 EtaText = p.Length > 4 ? p[4].Trim() : string.Empty,
+                ItemIndex = p.Length > 5 ? ParseNullableInt(p[5]) : null,
+                ItemTotal = p.Length > 6 ? ParseNullableInt(p[6]) : null,
                 Percent = Math.Max(0, Math.Min(100, (int)Math.Round(value)))
             };
+        }
+
+        private static int? ParseNullableInt(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return null;
+            string value = text.Trim();
+            if (string.Equals(value, "NA", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(value, "None", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(value, "null", StringComparison.OrdinalIgnoreCase)) return null;
+            int number;
+            return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out number) && number > 0
+                ? (int?)number
+                : null;
         }
 
         private async Task<ProcessResult> RunStreamingAsync(IEnumerable<string> arguments, Action<string> onLine, CancellationToken token)
