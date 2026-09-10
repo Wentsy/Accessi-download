@@ -75,41 +75,16 @@ namespace AccessiDownload
 
     internal sealed class AccessibleStatusTextBox : TextBox
     {
-        public AccessibleStatusTextBox()
-        {
-            Multiline = true;
-            ScrollBars = ScrollBars.Vertical;
-            WordWrap = true;
-            MinimumSize = new System.Drawing.Size(0, 88);
-        }
-
         public void SetMessage(string message)
         {
             Text = message ?? string.Empty;
             AccessibleName = "狀態：" + Text;
             SelectionStart = TextLength;
-            ScrollToCaret();
         }
 
         public void Announce(string message)
         {
             SetMessage(message);
-            AccessibilityNotifyClients(AccessibleEvents.NameChange, -1);
-        }
-
-        public void AppendAnnouncement(string message)
-        {
-            string line = message ?? string.Empty;
-            if (line.Length == 0) return;
-
-            if (TextLength > 0 && !Text.EndsWith("\r\n")) AppendText(System.Environment.NewLine);
-            AppendText(line);
-            SelectionStart = TextLength;
-            ScrollToCaret();
-
-            // NVDA already announces NameChange reliably for the start/completion
-            // messages, so use the same event for appended progress milestones.
-            AccessibleName = "狀態：" + line;
             AccessibilityNotifyClients(AccessibleEvents.NameChange, -1);
         }
     }
