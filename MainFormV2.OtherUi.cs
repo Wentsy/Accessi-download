@@ -31,8 +31,8 @@ namespace AccessiDownload
                 AutoSize = true,
                 Dock = DockStyle.Fill,
                 MaximumSize = new Size(780, 0),
-                Text = "YouTube、Bilibili 或 Douyin 若需要登入或 Cookie，先在平常使用的瀏覽器開啟網站，再讓 Accessi-download 直接讀取該瀏覽器的 Cookie。程式不會要求你輸入帳號密碼。",
-                AccessibleName = "登入說明"
+                Text = "YouTube、Bilibili 或 Douyin 若需要登入或 Cookie，可讓 Accessi-download 讀取平常使用的瀏覽器 Cookie。Douyin 常見情況只需要新鮮的訪客 Cookie，不一定需要登入帳號，也不必為了下載硬過滑塊驗證。程式不會要求你輸入帳號密碼。",
+                AccessibleName = "Cookie 與登入說明：Douyin 不一定需要登入，只可能需要新鮮的訪客 Cookie。"
             };
             layout.Controls.Add(intro, 0, 0);
             layout.SetColumnSpan(intro, 3);
@@ -41,10 +41,10 @@ namespace AccessiDownload
             cmbCookieSource = CreateDropDown("Cookie 來源");
             cmbCookieSource.Items.AddRange(new object[]
             {
-                new OptionItem { Key = "none", Display = "不使用登入資訊" },
+                new OptionItem { Key = "none", Display = "不使用 Cookie" },
+                new OptionItem { Key = "firefox", Display = "Mozilla Firefox（Douyin 推薦）" },
                 new OptionItem { Key = "edge", Display = "Microsoft Edge（從瀏覽器讀取）" },
                 new OptionItem { Key = "chrome", Display = "Google Chrome（從瀏覽器讀取）" },
-                new OptionItem { Key = "firefox", Display = "Mozilla Firefox（從瀏覽器讀取）" },
                 new OptionItem { Key = "brave", Display = "Brave（從瀏覽器讀取）" },
                 new OptionItem { Key = "opera", Display = "Opera（從瀏覽器讀取）" },
                 new OptionItem { Key = "vivaldi", Display = "Vivaldi（從瀏覽器讀取）" },
@@ -66,14 +66,14 @@ namespace AccessiDownload
             var loginPanel = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, WrapContents = true };
             var btnYouTubeLogin = new Button { Text = "開啟 YouTube 登入頁", AutoSize = true, AccessibleName = "在瀏覽器開啟 YouTube 登入頁" };
             var btnBilibiliLogin = new Button { Text = "開啟 Bilibili 登入頁", AutoSize = true, AccessibleName = "在瀏覽器開啟 Bilibili 登入頁" };
-            var btnDouyinLogin = new Button { Text = "開啟 Douyin", AutoSize = true, AccessibleName = "在瀏覽器開啟抖音 Douyin" };
+            var btnDouyinLogin = new Button { Text = "開啟 Douyin（不一定需要登入）", AutoSize = true, AccessibleName = "在瀏覽器開啟抖音 Douyin，不一定需要登入帳號" };
             btnYouTubeLogin.Click += (s, e) => OpenWebPage("https://accounts.google.com/ServiceLogin?service=youtube");
             btnBilibiliLogin.Click += (s, e) => OpenWebPage("https://passport.bilibili.com/login");
             btnDouyinLogin.Click += (s, e) => OpenWebPage("https://www.douyin.com/");
             loginPanel.Controls.Add(btnYouTubeLogin);
             loginPanel.Controls.Add(btnBilibiliLogin);
             loginPanel.Controls.Add(btnDouyinLogin);
-            layout.Controls.Add(CreateLabel("登入頁："), 0, 3);
+            layout.Controls.Add(CreateLabel("網站："), 0, 3);
             layout.Controls.Add(loginPanel, 1, 3);
             layout.SetColumnSpan(loginPanel, 2);
 
@@ -82,8 +82,8 @@ namespace AccessiDownload
                 AutoSize = true,
                 Dock = DockStyle.Fill,
                 MaximumSize = new Size(780, 0),
-                Text = "提示：Douyin 可能需要新鮮的瀏覽器 Cookie；若讀取失敗，可以先在瀏覽器開啟抖音，再完全關閉瀏覽器後重試。也可改用 Netscape 格式的 cookies.txt。Cookie 檔案請自行妥善保管，不要上傳到公開位置。",
-                AccessibleName = "Cookie 使用提示"
+                Text = "Douyin 建議：先直接試「不使用 Cookie」。若出現 Fresh cookies 錯誤，不代表必須登入；只要用瀏覽器正常開啟 Douyin 或那支影片，讓網站產生新的訪客 Cookie 即可。建議優先使用 Firefox，再完全關閉 Firefox後重試。Chrome／Edge 在 Windows 可能鎖住或無法解密 Cookie；必要時也可改用 Netscape 格式 cookies.txt。",
+                AccessibleName = "Douyin Cookie 提示：先匿名下載；需要 Fresh cookies 時不必登入，建議使用 Firefox 產生訪客 Cookie後關閉瀏覽器再下載。"
             };
             layout.Controls.Add(cookieTip, 0, 4);
             layout.SetColumnSpan(cookieTip, 3);
