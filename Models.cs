@@ -50,7 +50,17 @@ namespace AccessiDownload
     internal sealed class DownloadProgress
     {
         public int Percent { get; set; }
-        public string ItemTitle { get; set; }
+
+        // yt-dlp's Windows progress stream can render non-ASCII titles with the
+        // console code page even when the final RESULT path is valid UTF-8.
+        // Do not surface that unreliable title in the accessible progress status;
+        // the correctly encoded final file name is still shown on completion.
+        public string ItemTitle
+        {
+            get { return string.Empty; }
+            set { }
+        }
+
         public string PercentText { get; set; }
         public string SpeedText { get; set; }
         public string EtaText { get; set; }
