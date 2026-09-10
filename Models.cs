@@ -54,6 +54,8 @@ namespace AccessiDownload
         public string PercentText { get; set; }
         public string SpeedText { get; set; }
         public string EtaText { get; set; }
+        public int? ItemIndex { get; set; }
+        public int? ItemTotal { get; set; }
     }
 
     internal sealed class DownloadResult
@@ -97,8 +99,8 @@ namespace AccessiDownload
             SelectionStart = TextLength;
             ScrollToCaret();
 
-            // NameChange is intentionally used here because NVDA already announces
-            // the same event reliably for start/completion status messages.
+            // NVDA already announces NameChange reliably for the start/completion
+            // messages, so use the same event for appended progress milestones.
             AccessibleName = "狀態：" + line;
             AccessibilityNotifyClients(AccessibleEvents.NameChange, -1);
         }
