@@ -273,19 +273,19 @@ namespace AccessiDownload
                     completed += " 網址已自動清除。";
                 }
 
-                AppendStatus(completed);
+                SetStatus(completed);
                 AppendLog(completed);
 
                 if (settings.OpenFolderAfterDownload) OpenCompletedFolder(result);
             }
             catch (OperationCanceledException)
             {
-                AppendStatus("已取消下載。網址已保留，可直接重試；尚未完成的暫存檔可能會由 yt-dlp 留在下載資料夾中。");
+                SetStatus("已取消下載。網址已保留，可直接重試；尚未完成的暫存檔可能會由 yt-dlp 留在下載資料夾中。");
             }
             catch (Exception ex)
             {
                 AppendLog("下載錯誤：" + ex);
-                AppendStatus("下載失敗，網址已保留：" + ex.Message);
+                SetStatus("下載失敗，網址已保留：" + ex.Message);
                 MessageBox.Show(this, ex.Message + "\r\n\r\n網址會保留在編輯區，可直接重試。詳細資訊可在「記錄」分頁查看。", "下載失敗", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             finally { EndOperation(); }
