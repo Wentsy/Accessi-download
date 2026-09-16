@@ -59,6 +59,12 @@ namespace AccessiDownload
             BuildInterface();
             ApplySettingsToUi();
             UpdateDownloadModeControls();
+
+            // Make the URL editor the startup focus target. Select() works before the
+            // form is visible and lets focus return here after any startup dialog closes.
+            tabs.SelectedIndex = 0;
+            txtUrl.Select();
+
             KeyDown += MainForm_KeyDown;
             FormClosing += MainForm_FormClosing;
             Shown += MainForm_Shown;
