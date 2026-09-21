@@ -6,9 +6,12 @@
 
 ## 目前功能
 
+目前穩定基準：**v0.2.17**。
+
 - Windows 10 / 11 x64 綠色免安裝版。
 - 原生 WinForms 介面，優先支援 NVDA 與完整鍵盤操作。
-- 明確支援 YouTube、Bilibili、Douyin（抖音完整影片網址），以及 yt-dlp 可處理的其他網站。
+- 明確支援 YouTube、Bilibili、Douyin，以及 yt-dlp 可處理的其他網站。
+- Douyin 使用專用 WebView2 網頁解析引擎，支援單支影片、分享短網址、批量網址與合集下載，不再依賴 yt-dlp 的抖音 Cookie 流程。
 - 不需要先「取得影片資訊」：貼上網址後可直接下載。
 - 影片：
   - 可選最佳可用畫質，或設定 4320p / 2160p / 1440p / 1080p / 720p / 480p / 360p / 240p / 144p 畫質上限。
@@ -32,7 +35,7 @@
   - 可匯入 Netscape 格式 `cookies.txt`。
   - 介面內可直接開啟 YouTube、Bilibili、Douyin 網站。
   - 不要求在 Accessi-download 裡輸入帳號密碼。
-  - Douyin 可能需要新鮮瀏覽器 Cookie；遇到解析失敗時，可先在瀏覽器開啟抖音，再選擇該瀏覽器作為 Cookie 來源。
+  - Douyin 改由內建 WebView2 網頁解析；瀏覽狀態保存在 portable 資料夾旁的 `browser-data/DouyinWebView2`，一般情況不需要手動更新瀏覽器 Cookie。
 - 內建 yt-dlp 更新：
   - Stable / Nightly / Master 三個頻道。
   - 可手動立即更新。
@@ -52,7 +55,7 @@
 5. 選擇影片 / 音訊、畫質 / 音質與輸出格式。
 6. 選擇儲存位置後按「開始下載」。
 
-YouTube、Bilibili 或 Douyin 若需要 Cookie，到「登入與更新」分頁選擇你平常使用的瀏覽器即可。若瀏覽器 Cookie 被鎖定，可先完全關閉瀏覽器再試，或改用 `cookies.txt`。
+YouTube、Bilibili 或其他 yt-dlp 網站若需要 Cookie，到「登入與更新」分頁選擇你平常使用的瀏覽器即可。若瀏覽器 Cookie 被鎖定，可先完全關閉瀏覽器再試，或改用 `cookies.txt`。Douyin 則使用內建 WebView2 網頁解析，不走這套 Cookie 匯入流程。
 
 ## NVDA / 鍵盤操作
 
