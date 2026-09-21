@@ -261,15 +261,13 @@ namespace AccessiDownload
                 if (douyinOnly)
                 {
                     AppendLog("偵測到抖音網址：改用 WebView2 網頁解析模式，不依賴瀏覽器 cookies.txt。");
-                    using (var douyinService = new DouyinWebViewServiceDisposable())
-                    {
-                        result = await douyinService.Service.DownloadAsync(
-                            this,
-                            request,
-                            progressHandler,
-                            AppendLog,
-                            activeOperation.Token);
-                    }
+                    var douyinService = new DouyinWebViewService();
+                    result = await douyinService.DownloadAsync(
+                        this,
+                        request,
+                        progressHandler,
+                        AppendLog,
+                        activeOperation.Token);
                 }
                 else
                 {
