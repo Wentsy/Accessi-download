@@ -7,6 +7,7 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Web.Script.Serialization;
 
 namespace AccessiDownload
 {
@@ -33,6 +34,73 @@ namespace AccessiDownload
             if (!File.Exists(YtDlpPath)) throw new FileNotFoundException("找不到 yt-dlp.exe。", YtDlpPath);
 
             Directory.CreateDirectory(request.DownloadFolder);
+            var paths = new List<string>();
+
+            if (request.DownloadPlaylist)
+            {
+                // Playlist mode is handled one input URL at a time. This lets us
+                // resolve each playlist/collection name first and explicitly set the
+                // real destination directory instead of relying on output-template
+                // path tricks that vary by extractor/post-processing stage.
+                for (int i = 0; i < urls.Count; i++)
+                {
+                    token.ThrowIfCancellationRequested();
+                    string url = urls[i];
+                    PlaylistProbe probe = await ProbePlaylistAsync(url, request.Settings, log, token).ConfigureAwait(false);
+                    string targetFolder = request.DownloadFolder;
+
+                    if (probe != null && probe.IsPlaylist)
+                    {
+                        string folderName = SanitizeFolderName(
+                            !string.IsNullOrWhiteSpace(probe.Title)
+                                ? probe.Title
+                                : "播放清單_" + (string.IsNullOrWhiteSpace(probe.Id) ? (i + 1).ToString(CultureInfo.InvariantCulture) : probe.Id));
+                        targetFolder = Path.Combine(request.DownloadFolder, folderName);
+                        Directory.CreateDirectory(targetFolder);
+                        log?.Invoke("播放清單／合集：" + folderName + "，將下載到同名資料夾。");
+                    }
+                    else
+                    {
+                        log?.Invoke("網址 " + (i + 1) + "/" + urls.Count + " 不是播放清單／合集，維持下載到指定資料夾。");
+                    }
+
+                    await DownloadBatchAsync(
+                        request,
+                        new[] { url },
+                        targetFolder,
+                        paths,
+                        progress,
+                        log,
+                        token).ConfigureAwait(false);
+                }
+            }
+            else
+            {
+                await DownloadBatchAsync(
+                    request,
+                    urls,
+                    request.DownloadFolder,
+                    paths,
+                    progress,
+                    log,
+                    token).ConfigureAwait(false);
+            }
+
+            return new DownloadResult { FinalPaths = paths };
+        }
+
+        private async Task DownloadBatchAsync(
+            DownloadRequest request,
+            IEnumerable<string> urls,
+            string targetFolder,
+            List<string> paths,
+            Action<DownloadProgress> progress,
+            Action<string> log,
+            CancellationToken token)
+        {
+            List<string> batchUrls = urls.Where(x => !string.IsNullOrWhiteSpace(x)).ToList();
+            if (batchUrls.Count == 0) return;
+
             var args = BuildCommonArguments(request.Settings);
             args.Add(request.DownloadPlaylist ? "--yes-playlist" : "--no-playlist");
             args.Add("--newline");
@@ -41,15 +109,8 @@ namespace AccessiDownload
             args.Add("--fragment-retries"); args.Add("10");
             args.Add("--skip-playlist-after-errors"); args.Add("5");
             args.Add("-N"); args.Add("4");
-            args.Add("-P"); args.Add(request.DownloadFolder);
+            args.Add("-P"); args.Add(targetFolder);
             args.Add("-o"); args.Add(BuildOutputTemplate(request));
-            if (request.DownloadPlaylist)
-            {
-                // yt-dlp supports a dedicated pl_video output template. This lets
-                // playlist/collection entries live in their own named folder while
-                // ordinary single-video URLs keep the normal flat output path.
-                args.Add("-o"); args.Add("pl_video:" + BuildPlaylistOutputTemplate(request));
-            }
             args.Add("--progress-template");
             args.Add("download:PROGRESS|%(info.title)s|%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s|%(info.playlist_index)s|%(info.playlist_count)s");
             args.Add("--print");
@@ -60,9 +121,8 @@ namespace AccessiDownload
 
             if (request.AudioOnly) BuildAudioArguments(args, request);
             else BuildVideoArguments(args, request);
-            args.AddRange(urls);
+            args.AddRange(batchUrls);
 
-            var paths = new List<string>();
             ProcessResult result = await RunStreamingAsync(args, line =>
             {
                 if (string.IsNullOrWhiteSpace(line)) return;
@@ -71,15 +131,15 @@ namespace AccessiDownload
                     DownloadProgress parsed = ParseProgress(line);
 
                     // For ordinary multi-URL batches, the number of input URLs is the
-                    // reliable total. Each completed file advances the current item.
-                    if (!request.DownloadPlaylist && urls.Count > 1)
+                    // reliable total. Playlist batches get their own index/count from yt-dlp.
+                    if (!request.DownloadPlaylist && batchUrls.Count > 1)
                     {
                         int completed;
                         lock (paths) completed = paths.Count;
-                        parsed.ItemIndex = Math.Min(urls.Count, completed + 1);
-                        parsed.ItemTotal = urls.Count;
+                        parsed.ItemIndex = Math.Min(batchUrls.Count, completed + 1);
+                        parsed.ItemTotal = batchUrls.Count;
                     }
-                    else if (!request.DownloadPlaylist && urls.Count == 1)
+                    else if (!request.DownloadPlaylist && batchUrls.Count == 1)
                     {
                         parsed.ItemIndex = 1;
                         parsed.ItemTotal = 1;
@@ -102,29 +162,95 @@ namespace AccessiDownload
             }, token).ConfigureAwait(false);
 
             if (result.ExitCode != 0)
-            {
                 throw new InvalidOperationException(FriendlyDownloadError(result.StandardError, request.Settings));
+        }
+
+        private async Task<PlaylistProbe> ProbePlaylistAsync(
+            string url,
+            AppSettings settings,
+            Action<string> log,
+            CancellationToken token)
+        {
+            var args = BuildCommonArguments(settings);
+            args.Add("--yes-playlist");
+            args.Add("--flat-playlist");
+            args.Add("--playlist-end"); args.Add("1");
+            args.Add("--skip-download");
+            args.Add("--dump-single-json");
+            args.Add("--no-warnings");
+            args.Add(url);
+
+            CaptureResult result = await RunCaptureAsync(args, token).ConfigureAwait(false);
+            if (result.ExitCode != 0 || string.IsNullOrWhiteSpace(result.StandardOutput))
+            {
+                log?.Invoke("播放清單／合集名稱預讀失敗，將直接依原網址下載。"
+                    + (string.IsNullOrWhiteSpace(result.StandardError) ? "" : " " + LastUsefulLine(result.StandardError)));
+                return null;
             }
-            return new DownloadResult { FinalPaths = paths };
+
+            try
+            {
+                var serializer = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
+                var root = serializer.Deserialize<Dictionary<string, object>>(result.StandardOutput.Trim());
+                if (root == null) return null;
+
+                string type = GetJsonString(root, "_type");
+                object entries;
+                bool hasEntries = root.TryGetValue("entries", out entries) && entries != null;
+                bool isPlaylist = string.Equals(type, "playlist", StringComparison.OrdinalIgnoreCase) || hasEntries;
+                if (!isPlaylist) return new PlaylistProbe { IsPlaylist = false };
+
+                string title = GetJsonString(root, "title");
+                if (string.IsNullOrWhiteSpace(title)) title = GetJsonString(root, "playlist_title");
+                string id = GetJsonString(root, "id");
+                return new PlaylistProbe
+                {
+                    IsPlaylist = true,
+                    Title = title,
+                    Id = id
+                };
+            }
+            catch (Exception ex)
+            {
+                log?.Invoke("播放清單／合集 metadata 解析失敗，將直接依原網址下載：" + ex.Message);
+                return null;
+            }
+        }
+
+        private static string GetJsonString(Dictionary<string, object> source, string key)
+        {
+            if (source == null) return string.Empty;
+            object value;
+            return source.TryGetValue(key, out value) && value != null
+                ? Convert.ToString(value, CultureInfo.InvariantCulture)
+                : string.Empty;
+        }
+
+        private static string SanitizeFolderName(string value)
+        {
+            string name = string.IsNullOrWhiteSpace(value) ? "播放清單" : value.Trim();
+            foreach (char ch in Path.GetInvalidFileNameChars())
+                name = name.Replace(ch, '_');
+
+            name = name.Trim().TrimEnd('.', ' ');
+            if (name.Length > 120) name = name.Substring(0, 120).Trim().TrimEnd('.', ' ');
+
+            string upper = name.ToUpperInvariant();
+            string[] reserved =
+            {
+                "CON", "PRN", "AUX", "NUL",
+                "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+                "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
+            };
+            if (reserved.Contains(upper)) name = "_" + name;
+            return string.IsNullOrWhiteSpace(name) ? "播放清單" : name;
         }
 
         private string BuildOutputTemplate(DownloadRequest request)
         {
             string id = request.IncludeMediaId ? " [%(id)s]" : string.Empty;
-            return "%(title).160B" + id + ".%(ext)s";
-        }
-
-        private string BuildPlaylistOutputTemplate(DownloadRequest request)
-        {
-            string id = request.IncludeMediaId ? " [%(id)s]" : string.Empty;
-            string file = "%(title).160B" + id + ".%(ext)s";
-
-            // Keep the path separator literal in the output template. Putting '/'
-            // inside a field replacement causes yt-dlp's filename sanitizer to
-            // treat it as filename content instead of a directory separator.
-            // playlist_title is preferred; playlist falls back to playlist_id when
-            // a site does not expose a human-readable title.
-            return "%(playlist_title,playlist)s/%(playlist_index)03d - " + file;
+            string prefix = request.DownloadPlaylist ? "%(playlist_index&{} - |)s" : string.Empty;
+            return prefix + "%(title).160B" + id + ".%(ext)s";
         }
 
         private List<string> BuildCommonArguments(AppSettings settings)
@@ -301,6 +427,42 @@ namespace AccessiDownload
             }
         }
 
+        private async Task<CaptureResult> RunCaptureAsync(
+            IEnumerable<string> arguments,
+            CancellationToken token)
+        {
+            using (var process = new Process())
+            {
+                process.StartInfo = new ProcessStartInfo
+                {
+                    FileName = YtDlpPath,
+                    Arguments = string.Join(" ", arguments.Select(QuoteArgument)),
+                    WorkingDirectory = baseDirectory,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    StandardOutputEncoding = Encoding.UTF8,
+                    StandardErrorEncoding = Encoding.UTF8
+                };
+                process.Start();
+                using (token.Register(() => KillProcessTree(process)))
+                {
+                    Task<string> outputTask = process.StandardOutput.ReadToEndAsync();
+                    Task<string> errorTask = process.StandardError.ReadToEndAsync();
+                    await Task.Run(() => process.WaitForExit(), token).ConfigureAwait(false);
+                    process.WaitForExit();
+                    token.ThrowIfCancellationRequested();
+                    return new CaptureResult
+                    {
+                        ExitCode = process.ExitCode,
+                        StandardOutput = await outputTask.ConfigureAwait(false),
+                        StandardError = await errorTask.ConfigureAwait(false)
+                    };
+                }
+            }
+        }
+
         private static string QuoteArgument(string value)
         {
             if (value == null) return "\"\"";
@@ -340,6 +502,20 @@ namespace AccessiDownload
             string[] lines = text.Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries);
             for (int i = lines.Length - 1; i >= 0; i--) if (!string.IsNullOrWhiteSpace(lines[i])) return lines[i].Trim();
             return text.Trim();
+        }
+
+        private sealed class PlaylistProbe
+        {
+            public bool IsPlaylist { get; set; }
+            public string Title { get; set; }
+            public string Id { get; set; }
+        }
+
+        private sealed class CaptureResult
+        {
+            public int ExitCode { get; set; }
+            public string StandardOutput { get; set; }
+            public string StandardError { get; set; }
         }
 
         private sealed class ProcessResult
