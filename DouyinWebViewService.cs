@@ -29,6 +29,10 @@ namespace AccessiDownload
             @"(?:/video/|[?&](?:modal_id|aweme_id)=)(\d{10,})",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+        private static readonly Regex CollectionIdRegex = new Regex(
+            @"/(?:collection|mix)/(\d{10,})",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
         private readonly string baseDirectory = AppDomain.CurrentDomain.BaseDirectory;
         private string FfmpegPath { get { return Path.Combine(baseDirectory, "tools", "ffmpeg.exe"); } }
 
@@ -57,8 +61,6 @@ namespace AccessiDownload
             if (urls.Count == 0) throw new ArgumentException("缺少抖音網址。");
             if (urls.Any(url => !CanHandleUrl(url)))
                 throw new InvalidOperationException("抖音網頁解析模式只能處理 douyin.com 網址。");
-            if (request.DownloadPlaylist)
-                throw new InvalidOperationException("目前抖音網頁解析測試版先支援單支影片或分享短網址；合集稍後再接上。");
             if (!File.Exists(FfmpegPath) && request.AudioOnly)
                 throw new FileNotFoundException("只下載音訊需要 tools\\ffmpeg.exe。", FfmpegPath);
 
@@ -73,18 +75,61 @@ namespace AccessiDownload
                 for (int i = 0; i < urls.Count; i++)
                 {
                     token.ThrowIfCancellationRequested();
-                    int itemIndex = i + 1;
-                    log?.Invoke("抖音網頁解析：正在開啟第 " + itemIndex + "/" + urls.Count + " 個網址。");
+                    string inputUrl = urls[i];
+                    int inputIndex = i + 1;
+                    log?.Invoke("抖音網頁解析：正在開啟第 " + inputIndex + "/" + urls.Count + " 個網址。");
 
-                    DouyinResolvedMedia media = await ResolveWithRetryAsync(
-                        bridge, urls[i], request.MaxVideoHeight, log, token);
+                    if (request.DownloadPlaylist)
+                    {
+                        DouyinResolvedCollection collection = await bridge.TryResolveCollectionAsync(
+                            inputUrl, request.MaxVideoHeight, log, token);
+                        if (collection != null)
+                        {
+                            if (collection.Items.Count == 0)
+                                throw new InvalidOperationException("抖音合集沒有找到可下載作品。");
 
-                    log?.Invoke("抖音網頁解析成功：" + media.Id
-                        + (media.Height > 0 ? "，" + media.Height + "p" : string.Empty));
+                            string collectionFolderName = SanitizeFileName(
+                                string.IsNullOrWhiteSpace(collection.Name)
+                                    ? "抖音合集_" + collection.Id
+                                    : collection.Name);
+                            string collectionFolder = Path.Combine(request.DownloadFolder, collectionFolderName);
+                            Directory.CreateDirectory(collectionFolder);
 
-                    string finalPath = await DownloadResolvedMediaAsync(
-                        media, request, itemIndex, urls.Count, progress, log, token);
-                    result.FinalPaths.Add(finalPath);
+                            log?.Invoke("抖音合集解析完成：" + collectionFolderName
+                                + "，共 " + collection.Items.Count + " 個作品。");
+
+                            DownloadRequest collectionRequest = CloneRequestWithFolder(request, collectionFolder);
+                            for (int j = 0; j < collection.Items.Count; j++)
+                            {
+                                token.ThrowIfCancellationRequested();
+                                DouyinResolvedMedia media = collection.Items[j];
+                                log?.Invoke("抖音合集：準備下載第 " + (j + 1) + "/"
+                                    + collection.Items.Count + " 個作品"
+                                    + (string.IsNullOrWhiteSpace(media.Id) ? "" : "，ID " + media.Id) + "。");
+
+                                string finalPath = await DownloadResolvedMediaAsync(
+                                    media,
+                                    collectionRequest,
+                                    j + 1,
+                                    collection.Items.Count,
+                                    progress,
+                                    log,
+                                    token);
+                                result.FinalPaths.Add(finalPath);
+                            }
+                            continue;
+                        }
+                    }
+
+                    DouyinResolvedMedia singleMedia = await ResolveWithRetryAsync(
+                        bridge, inputUrl, request.MaxVideoHeight, log, token);
+
+                    log?.Invoke("抖音網頁解析成功：" + singleMedia.Id
+                        + (singleMedia.Height > 0 ? "，" + singleMedia.Height + "p" : string.Empty));
+
+                    string singlePath = await DownloadResolvedMediaAsync(
+                        singleMedia, request, inputIndex, urls.Count, progress, log, token);
+                    result.FinalPaths.Add(singlePath);
                 }
 
                 return result;
@@ -129,6 +174,27 @@ namespace AccessiDownload
                 throw new InvalidOperationException(
                     "抖音網頁仍無法取得影片資料。可能是抖音再次更改風控；網址已保留，可稍後重試。", ex);
             }
+        }
+
+        private static DownloadRequest CloneRequestWithFolder(
+            DownloadRequest source,
+            string folder)
+        {
+            return new DownloadRequest
+            {
+                Url = source.Url,
+                Urls = source.Urls == null ? new List<string>() : new List<string>(source.Urls),
+                DownloadFolder = folder,
+                AudioOnly = source.AudioOnly,
+                MaxVideoHeight = source.MaxVideoHeight,
+                VideoContainer = source.VideoContainer,
+                AudioSourceFormatId = source.AudioSourceFormatId,
+                AudioOutputFormat = source.AudioOutputFormat,
+                AudioOutputQuality = source.AudioOutputQuality,
+                IncludeMediaId = source.IncludeMediaId,
+                DownloadPlaylist = source.DownloadPlaylist,
+                Settings = source.Settings
+            };
         }
 
         private async Task<string> DownloadResolvedMediaAsync(
@@ -397,6 +463,13 @@ namespace AccessiDownload
             public int Height { get; set; }
         }
 
+        private sealed class DouyinResolvedCollection
+        {
+            public string Id { get; set; }
+            public string Name { get; set; }
+            public List<DouyinResolvedMedia> Items { get; set; } = new List<DouyinResolvedMedia>();
+        }
+
         private sealed class DouyinBridgeForm : Form
         {
             private readonly WebView2 webView;
@@ -525,6 +598,189 @@ namespace AccessiDownload
                     }
                 }
                 catch { }
+            }
+
+            public async Task<DouyinResolvedCollection> TryResolveCollectionAsync(
+                string url,
+                int? maxHeight,
+                Action<string> log,
+                CancellationToken token)
+            {
+                if (!initialized) throw new InvalidOperationException("抖音 WebView2 尚未初始化。");
+
+                string mixId = ExtractCollectionId(url);
+                if (string.IsNullOrWhiteSpace(mixId))
+                {
+                    webView.CoreWebView2.Navigate(url);
+                    for (int i = 0; i < 24; i++)
+                    {
+                        token.ThrowIfCancellationRequested();
+                        string current = webView.Source == null ? string.Empty : webView.Source.AbsoluteUri;
+                        mixId = ExtractCollectionId(current);
+                        if (!string.IsNullOrWhiteSpace(mixId)) break;
+
+                        // Once a short link has clearly landed on an ordinary video,
+                        // stop probing for a collection and let the single-video path run.
+                        if (i >= 4 && !string.IsNullOrWhiteSpace(ExtractVideoId(current)))
+                            return null;
+
+                        await Task.Delay(250, token);
+                    }
+                }
+                else
+                {
+                    webView.CoreWebView2.Navigate(url);
+                }
+
+                if (string.IsNullOrWhiteSpace(mixId)) return null;
+
+                log?.Invoke("抖音合集：偵測到合集 ID " + mixId + "，正在取得作品清單。");
+                await Task.Delay(1000, token);
+
+                string collectionName = null;
+                try
+                {
+                    string detailText = await FetchPageJsonAsync(
+                        "/aweme/v1/web/mix/detail/?mix_id=" + mixId,
+                        token);
+                    var detailRoot = json.Deserialize<Dictionary<string, object>>(detailText);
+                    Dictionary<string, object> mixInfo = GetDictionary(detailRoot, "mix_info")
+                        ?? GetDictionary(detailRoot, "mix_detail")
+                        ?? detailRoot;
+                    collectionName = GetString(mixInfo, "mix_name");
+                    if (string.IsNullOrWhiteSpace(collectionName))
+                        collectionName = GetString(mixInfo, "title");
+                }
+                catch (Exception ex) when (!(ex is OperationCanceledException))
+                {
+                    log?.Invoke("抖音合集名稱取得失敗，將以合集 ID 建立資料夾：" + ex.Message);
+                }
+
+                var resolved = new DouyinResolvedCollection
+                {
+                    Id = mixId,
+                    Name = string.IsNullOrWhiteSpace(collectionName)
+                        ? "抖音合集_" + mixId
+                        : collectionName
+                };
+
+                var unresolvedIds = new List<string>();
+                var seenIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                long cursor = 0;
+
+                for (int page = 1; page <= 500; page++)
+                {
+                    token.ThrowIfCancellationRequested();
+                    string path = "/aweme/v1/web/mix/aweme/?mix_id=" + mixId
+                        + "&cursor=" + cursor.ToString(CultureInfo.InvariantCulture)
+                        + "&count=20";
+                    string pageText = await FetchPageJsonAsync(path, token);
+                    var root = json.Deserialize<Dictionary<string, object>>(pageText);
+
+                    object listObject;
+                    int addedThisPage = 0;
+                    if (root != null && root.TryGetValue("aweme_list", out listObject))
+                    {
+                        foreach (object rawItem in EnumerateValues(listObject))
+                        {
+                            var item = rawItem as Dictionary<string, object>;
+                            if (item == null) continue;
+
+                            string awemeId = GetString(item, "aweme_id");
+                            if (string.IsNullOrWhiteSpace(awemeId) || !seenIds.Add(awemeId))
+                                continue;
+
+                            string synthetic = json.Serialize(new Dictionary<string, object>
+                            {
+                                { "aweme_detail", item }
+                            });
+                            DouyinResolvedMedia media = ParseDetail(synthetic, maxHeight, null);
+                            if (media != null && !string.IsNullOrWhiteSpace(media.VideoUrl))
+                            {
+                                resolved.Items.Add(media);
+                            }
+                            else
+                            {
+                                unresolvedIds.Add(awemeId);
+                            }
+                            addedThisPage++;
+                        }
+                    }
+
+                    bool hasMore = GetBool(root, "has_more");
+                    long nextCursor = GetLong(root, "max_cursor");
+                    if (nextCursor <= 0) nextCursor = GetLong(root, "cursor");
+
+                    log?.Invoke("抖音合集：第 " + page + " 頁取得 " + addedThisPage
+                        + " 個新作品，目前共 " + seenIds.Count + " 個。");
+
+                    if (!hasMore) break;
+                    if (nextCursor == cursor)
+                    {
+                        log?.Invoke("抖音合集：游標沒有前進，為避免重複請求已停止翻頁。");
+                        break;
+                    }
+                    cursor = nextCursor;
+                }
+
+                // A few list entries may omit direct media URLs. Reuse the already
+                // proven single-video page resolver only for those exceptional items.
+                foreach (string awemeId in unresolvedIds)
+                {
+                    token.ThrowIfCancellationRequested();
+                    try
+                    {
+                        DouyinResolvedMedia media = await ResolveAsync(
+                            "https://www.douyin.com/video/" + awemeId,
+                            maxHeight,
+                            log,
+                            token);
+                        if (media != null && !string.IsNullOrWhiteSpace(media.VideoUrl))
+                            resolved.Items.Add(media);
+                    }
+                    catch (Exception ex) when (!(ex is OperationCanceledException))
+                    {
+                        log?.Invoke("抖音合集：作品 " + awemeId + " 解析失敗，將略過：" + ex.Message);
+                    }
+                }
+
+                resolved.Items = resolved.Items
+                    .Where(x => x != null && !string.IsNullOrWhiteSpace(x.VideoUrl))
+                    .GroupBy(
+                        x => string.IsNullOrWhiteSpace(x.Id) ? x.VideoUrl : x.Id,
+                        StringComparer.OrdinalIgnoreCase)
+                    .Select(g => g.First())
+                    .ToList();
+
+                return resolved;
+            }
+
+            private async Task<string> FetchPageJsonAsync(string pathAndQuery, CancellationToken token)
+            {
+                string encoded = json.Serialize(pathAndQuery);
+                string script =
+                    "(async()=>{try{" +
+                    "const u=" + encoded + ";" +
+                    "const r=await window.fetch(u,{credentials:'include'});" +
+                    "const t=await r.text();" +
+                    "return JSON.stringify({status:r.status,text:t});" +
+                    "}catch(e){return JSON.stringify({status:0,text:'',error:String(e)});}})();";
+
+                string raw = await webView.ExecuteScriptAsync(script);
+                token.ThrowIfCancellationRequested();
+
+                string inner;
+                try { inner = json.Deserialize<string>(raw); }
+                catch { inner = raw; }
+
+                var wrapper = json.Deserialize<Dictionary<string, object>>(inner);
+                int status = GetInt(wrapper, "status");
+                string text = GetString(wrapper, "text");
+                if (status >= 200 && status < 300 && !string.IsNullOrWhiteSpace(text))
+                    return text;
+
+                throw new InvalidOperationException(
+                    "抖音網頁 API 回應 " + status + "：" + pathAndQuery);
             }
 
             public async Task<DouyinResolvedMedia> ResolveAsync(
@@ -959,6 +1215,39 @@ namespace AccessiDownload
                 if (!source.TryGetValue(key, out value) || value == null) return 0;
                 int result;
                 return int.TryParse(Convert.ToString(value, CultureInfo.InvariantCulture), out result) ? result : 0;
+            }
+
+            private static bool GetBool(Dictionary<string, object> source, string key)
+            {
+                if (source == null) return false;
+                object value;
+                if (!source.TryGetValue(key, out value) || value == null) return false;
+                if (value is bool) return (bool)value;
+                string text = Convert.ToString(value, CultureInfo.InvariantCulture);
+                return string.Equals(text, "true", StringComparison.OrdinalIgnoreCase)
+                    || text == "1";
+            }
+
+            private static long GetLong(Dictionary<string, object> source, string key)
+            {
+                if (source == null) return 0;
+                object value;
+                if (!source.TryGetValue(key, out value) || value == null) return 0;
+                long result;
+                return long.TryParse(
+                    Convert.ToString(value, CultureInfo.InvariantCulture),
+                    NumberStyles.Integer,
+                    CultureInfo.InvariantCulture,
+                    out result)
+                    ? result
+                    : 0;
+            }
+
+            private static string ExtractCollectionId(string url)
+            {
+                if (string.IsNullOrWhiteSpace(url)) return null;
+                Match match = CollectionIdRegex.Match(url);
+                return match.Success ? match.Groups[1].Value : null;
             }
 
             private static string ExtractVideoId(string url)
