@@ -104,7 +104,7 @@ namespace AccessiDownload
             {
                 try
                 {
-                    return await bridge.ResolveAsync(url, maxHeight, token);
+                    return await bridge.ResolveAsync(url, maxHeight, log, token);
                 }
                 catch (Exception ex) when (!(ex is OperationCanceledException))
                 {
@@ -122,7 +122,7 @@ namespace AccessiDownload
 
             try
             {
-                return await bridge.ResolveAsync(url, maxHeight, token);
+                return await bridge.ResolveAsync(url, maxHeight, log, token);
             }
             catch (Exception ex) when (!(ex is OperationCanceledException))
             {
@@ -530,6 +530,7 @@ namespace AccessiDownload
             public async Task<DouyinResolvedMedia> ResolveAsync(
                 string url,
                 int? maxHeight,
+                Action<string> log,
                 CancellationToken token)
             {
                 if (!initialized) throw new InvalidOperationException("抖音 WebView2 尚未初始化。");
@@ -546,10 +547,19 @@ namespace AccessiDownload
                     jsonText = await FetchDetailFromPageAsync(id, token);
                 }
 
-                DouyinResolvedMedia media = ParseDetail(jsonText, maxHeight);
-                if (media == null || string.IsNullOrWhiteSpace(media.VideoUrl))
-                    throw new InvalidOperationException("抖音網頁沒有回傳可下載的影片來源。");
-                return media;
+                DouyinResolvedMedia media = ParseDetail(jsonText, maxHeight, log);
+                if (media != null && !string.IsNullOrWhiteSpace(media.VideoUrl))
+                    return media;
+
+                // The JSON schema changes frequently. If no stable URL was found,
+                // ask the actual Douyin page which resource its <video> element is
+                // playing, then inspect resource-performance entries as a fallback.
+                media = await ResolveFromPageMediaAsync(jsonText, log, token);
+                if (media != null && !string.IsNullOrWhiteSpace(media.VideoUrl))
+                    return media;
+
+                throw new InvalidOperationException(
+                    "已取得抖音影片資料，但找不到可下載的影片網址。解析摘要已寫入記錄。");
             }
 
             private async Task<string> WaitForPageDetailAsync(CancellationToken token)
@@ -630,83 +640,300 @@ namespace AccessiDownload
                 }
             }
 
-            private DouyinResolvedMedia ParseDetail(string text, int? maxHeight)
+            private DouyinResolvedMedia ParseDetail(
+                string text,
+                int? maxHeight,
+                Action<string> log)
             {
                 var root = json.Deserialize<Dictionary<string, object>>(text);
                 Dictionary<string, object> detail = GetDictionary(root, "aweme_detail");
-                if (detail == null) return null;
+                if (detail == null)
+                {
+                    log?.Invoke("抖音解析摘要：detail JSON 沒有 aweme_detail。");
+                    return null;
+                }
 
                 string id = GetString(detail, "aweme_id");
                 string title = GetString(detail, "desc");
                 Dictionary<string, object> video = GetDictionary(detail, "video");
-                if (video == null) return null;
+                if (video == null)
+                {
+                    log?.Invoke("抖音解析摘要：aweme_detail 沒有 video；aweme_type="
+                        + GetString(detail, "aweme_type"));
+                    return null;
+                }
+
+                log?.Invoke("抖音解析摘要：video 欄位="
+                    + string.Join(", ", video.Keys.OrderBy(k => k).Take(40)));
 
                 var candidates = new List<VideoCandidate>();
+
+                // Known current Douyin layouts.
+                AddAddressCandidates(candidates, GetDictionary(video, "play_addr"), GetInt(video, "height"), 0);
+                AddAddressCandidates(candidates, GetDictionary(video, "play_addr_h264"), GetInt(video, "height"), 0);
+                AddAddressCandidates(candidates, GetDictionary(video, "play_addr_265"), GetInt(video, "height"), 0);
+                AddAddressCandidates(candidates, GetDictionary(video, "play_addr_256"), GetInt(video, "height"), 0);
+                AddAddressCandidates(candidates, GetDictionary(video, "download_addr"), GetInt(video, "height"), 0);
+
                 object bitRateObj;
                 if (video.TryGetValue("bit_rate", out bitRateObj))
                 {
-                    object[] list = bitRateObj as object[];
-                    if (list != null)
+                    foreach (object item in EnumerateValues(bitRateObj))
                     {
-                        foreach (object item in list)
-                        {
-                            var bitrate = item as Dictionary<string, object>;
-                            if (bitrate == null) continue;
-                            Dictionary<string, object> play = GetDictionary(bitrate, "play_addr");
-                            AddCandidate(candidates, play, GetInt(play, "height"), GetInt(bitrate, "bit_rate"));
-                        }
+                        var bitrate = item as Dictionary<string, object>;
+                        if (bitrate == null) continue;
+                        Dictionary<string, object> play = GetDictionary(bitrate, "play_addr");
+                        int height = Math.Max(GetInt(play, "height"), GetInt(bitrate, "height"));
+                        AddAddressCandidates(candidates, play, height, GetInt(bitrate, "bit_rate"));
                     }
                 }
 
-                Dictionary<string, object> direct = GetDictionary(video, "play_addr");
-                AddCandidate(candidates, direct, GetInt(video, "height"), 0);
-                AddCandidate(candidates, GetDictionary(video, "play_addr_h264"), GetInt(video, "height"), 0);
-                AddCandidate(candidates, GetDictionary(video, "play_addr_265"), GetInt(video, "height"), 0);
+                // Future-proof fallback: recursively scan every object under video for
+                // media-looking URLs. Restrict scoring so cover/avatar images never win.
+                CollectRecursiveMediaCandidates(video, candidates, 0, 0);
 
                 candidates = candidates
+                    .Where(c => !string.IsNullOrWhiteSpace(c.Url))
                     .GroupBy(c => c.Url, StringComparer.OrdinalIgnoreCase)
-                    .Select(g => g.First())
+                    .Select(g => g.OrderByDescending(x => x.Score).First())
                     .ToList();
+
+                if (candidates.Count == 0)
+                {
+                    log?.Invoke("抖音解析摘要：video 區塊內沒有找到任何影片 URL。");
+                    return null;
+                }
+
+                log?.Invoke("抖音解析摘要：找到 " + candidates.Count + " 個影片網址候選。");
 
                 IEnumerable<VideoCandidate> eligible = candidates;
                 if (maxHeight.HasValue)
                 {
                     List<VideoCandidate> limited = candidates
-                        .Where(c => c.Height <= 0 || c.Height <= maxHeight.Value)
+                        .Where(x => x.Height <= 0 || x.Height <= maxHeight.Value)
                         .ToList();
                     if (limited.Count > 0) eligible = limited;
                 }
 
                 VideoCandidate chosen = eligible
-                    .OrderByDescending(c => c.Height)
-                    .ThenByDescending(c => c.Bitrate)
+                    .OrderByDescending(x => x.Score)
+                    .ThenByDescending(x => x.Height)
+                    .ThenByDescending(x => x.Bitrate)
                     .FirstOrDefault();
                 if (chosen == null) return null;
 
                 return new DouyinResolvedMedia
                 {
-                    Id = string.IsNullOrWhiteSpace(id) ? ExtractVideoId(webView.Source == null ? null : webView.Source.AbsoluteUri) : id,
+                    Id = string.IsNullOrWhiteSpace(id)
+                        ? ExtractVideoId(webView.Source == null ? null : webView.Source.AbsoluteUri)
+                        : id,
                     Title = title,
                     VideoUrl = chosen.Url,
                     Height = chosen.Height
                 };
             }
 
-            private static void AddCandidate(
+            private async Task<DouyinResolvedMedia> ResolveFromPageMediaAsync(
+                string jsonText,
+                Action<string> log,
+                CancellationToken token)
+            {
+                string id = null;
+                string title = null;
+                try
+                {
+                    var root = json.Deserialize<Dictionary<string, object>>(jsonText);
+                    var detail = GetDictionary(root, "aweme_detail");
+                    id = GetString(detail, "aweme_id");
+                    title = GetString(detail, "desc");
+                }
+                catch { }
+
+                string script =
+                    "(()=>{" +
+                    "const out=[];" +
+                    "for(const v of document.querySelectorAll('video')){" +
+                    " if(v.currentSrc) out.push(v.currentSrc);" +
+                    " if(v.src) out.push(v.src);" +
+                    " for(const s of v.querySelectorAll('source')) if(s.src) out.push(s.src);" +
+                    "}" +
+                    "try{for(const e of performance.getEntriesByType('resource')){" +
+                    " const u=e.name||'';" +
+                    " if(/douyinvod|byte|video\\/tos|aweme\\/v1\\/play/i.test(u)) out.push(u);" +
+                    "}}catch(e){}" +
+                    "return [...new Set(out)].filter(u=>/^https?:/i.test(u));" +
+                    "})()";
+
+                for (int attempt = 0; attempt < 8; attempt++)
+                {
+                    token.ThrowIfCancellationRequested();
+                    string raw = await webView.ExecuteScriptAsync(script);
+                    object[] urls = null;
+                    try { urls = json.Deserialize<object[]>(raw); } catch { }
+
+                    string chosen = urls == null
+                        ? null
+                        : urls.Select(x => x as string)
+                            .Where(IsLikelyVideoUrl)
+                            .OrderByDescending(MediaUrlScore)
+                            .FirstOrDefault();
+
+                    if (!string.IsNullOrWhiteSpace(chosen))
+                    {
+                        log?.Invoke("抖音頁面 fallback：從實際播放資源取得影片網址。");
+                        return new DouyinResolvedMedia
+                        {
+                            Id = string.IsNullOrWhiteSpace(id)
+                                ? ExtractVideoId(webView.Source == null ? null : webView.Source.AbsoluteUri)
+                                : id,
+                            Title = title,
+                            VideoUrl = chosen,
+                            Height = 0
+                        };
+                    }
+
+                    await Task.Delay(750, token);
+                }
+
+                log?.Invoke("抖音頁面 fallback：DOM 與 resource timing 都沒有找到影片直連。");
+                return null;
+            }
+
+            private static void AddAddressCandidates(
                 ICollection<VideoCandidate> list,
                 Dictionary<string, object> address,
                 int height,
                 int bitrate)
             {
                 if (address == null) return;
+
                 object urlsObj;
-                if (!address.TryGetValue("url_list", out urlsObj)) return;
-                object[] urls = urlsObj as object[];
-                if (urls == null) return;
-                string url = urls.Select(x => x as string)
-                    .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x) && x.StartsWith("http", StringComparison.OrdinalIgnoreCase));
-                if (string.IsNullOrWhiteSpace(url)) return;
-                list.Add(new VideoCandidate { Url = url, Height = height, Bitrate = bitrate });
+                if (address.TryGetValue("url_list", out urlsObj))
+                {
+                    foreach (object value in EnumerateValues(urlsObj))
+                    {
+                        string url = value as string;
+                        if (!IsLikelyVideoUrl(url)) continue;
+                        list.Add(new VideoCandidate
+                        {
+                            Url = url,
+                            Height = Math.Max(height, GetInt(address, "height")),
+                            Bitrate = bitrate,
+                            Score = MediaUrlScore(url)
+                        });
+                    }
+                }
+
+                // Some responses expose a direct URL under alternate property names.
+                foreach (string key in new[] { "url", "src", "play_url", "download_url" })
+                {
+                    string url = GetString(address, key);
+                    if (!IsLikelyVideoUrl(url)) continue;
+                    list.Add(new VideoCandidate
+                    {
+                        Url = url,
+                        Height = Math.Max(height, GetInt(address, "height")),
+                        Bitrate = bitrate,
+                        Score = MediaUrlScore(url)
+                    });
+                }
+            }
+
+            private static void CollectRecursiveMediaCandidates(
+                object node,
+                ICollection<VideoCandidate> list,
+                int inheritedHeight,
+                int inheritedBitrate)
+            {
+                if (node == null) return;
+
+                var dict = node as Dictionary<string, object>;
+                if (dict != null)
+                {
+                    int height = GetInt(dict, "height");
+                    if (height <= 0) height = inheritedHeight;
+                    int bitrate = GetInt(dict, "bit_rate");
+                    if (bitrate <= 0) bitrate = inheritedBitrate;
+
+                    foreach (KeyValuePair<string, object> pair in dict)
+                    {
+                        string text = pair.Value as string;
+                        if (IsLikelyVideoUrl(text))
+                        {
+                            list.Add(new VideoCandidate
+                            {
+                                Url = text,
+                                Height = height,
+                                Bitrate = bitrate,
+                                Score = MediaUrlScore(text)
+                            });
+                        }
+                        else
+                        {
+                            CollectRecursiveMediaCandidates(pair.Value, list, height, bitrate);
+                        }
+                    }
+                    return;
+                }
+
+                foreach (object value in EnumerateValues(node))
+                {
+                    if (!ReferenceEquals(value, node))
+                        CollectRecursiveMediaCandidates(value, list, inheritedHeight, inheritedBitrate);
+                }
+            }
+
+            private static IEnumerable<object> EnumerateValues(object value)
+            {
+                if (value == null) yield break;
+
+                object[] array = value as object[];
+                if (array != null)
+                {
+                    foreach (object item in array) yield return item;
+                    yield break;
+                }
+
+                var list = value as System.Collections.IEnumerable;
+                if (list != null && !(value is string))
+                {
+                    foreach (object item in list) yield return item;
+                    yield break;
+                }
+
+                yield return value;
+            }
+
+            private static bool IsLikelyVideoUrl(string url)
+            {
+                if (string.IsNullOrWhiteSpace(url) || !url.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+                    return false;
+
+                string lower = url.ToLowerInvariant();
+                if (lower.Contains(".jpg") || lower.Contains(".jpeg") || lower.Contains(".png")
+                    || lower.Contains(".webp") || lower.Contains("image"))
+                    return false;
+
+                return lower.Contains("douyinvod")
+                    || lower.Contains("byte")
+                    || lower.Contains("/video/")
+                    || lower.Contains("/video/tos/")
+                    || lower.Contains("/aweme/v1/play")
+                    || lower.Contains("mime_type=video")
+                    || lower.Contains(".mp4");
+            }
+
+            private static int MediaUrlScore(string url)
+            {
+                if (string.IsNullOrWhiteSpace(url)) return 0;
+                string lower = url.ToLowerInvariant();
+                int score = 0;
+                if (lower.Contains("douyinvod")) score += 100;
+                if (!lower.Contains("douyin.com/aweme/v1/play")) score += 30;
+                if (lower.Contains("watermark=0")) score += 20;
+                if (lower.Contains(".mp4") || lower.Contains("mime_type=video")) score += 10;
+                if (lower.Contains("playwm") || lower.Contains("watermark=1")) score -= 60;
+                return score;
             }
 
             private static Dictionary<string, object> GetDictionary(Dictionary<string, object> source, string key)
@@ -746,6 +973,7 @@ namespace AccessiDownload
                 public string Url { get; set; }
                 public int Height { get; set; }
                 public int Bitrate { get; set; }
+                public int Score { get; set; }
             }
         }
     }
