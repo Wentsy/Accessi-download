@@ -479,6 +479,7 @@ namespace AccessiDownload
             private readonly JavaScriptSerializer json = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
             private TaskCompletionSource<string> detailResponse;
             private TaskCompletionSource<bool> verificationChoice;
+            private TaskCompletionSource<bool> navigationCompleted;
             private bool initialized;
 
             public DouyinBridgeForm()
@@ -570,6 +571,20 @@ namespace AccessiDownload
                 webView.CoreWebView2.Settings.IsStatusBarEnabled = false;
                 webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = true;
                 webView.CoreWebView2.WebResourceResponseReceived += CoreWebView2_WebResourceResponseReceived;
+                webView.CoreWebView2.NavigationStarting += (s, e) =>
+                {
+                    navigationCompleted = new TaskCompletionSource<bool>();
+                };
+                webView.CoreWebView2.NavigationCompleted += (s, e) =>
+                {
+                    TaskCompletionSource<bool> target = navigationCompleted;
+                    if (target != null)
+                    {
+                        if (e.IsSuccess) target.TrySetResult(true);
+                        else target.TrySetException(
+                            new InvalidOperationException("抖音網頁導覽失敗，WebErrorStatus=" + e.WebErrorStatus));
+                    }
+                };
                 initialized = true;
             }
 
@@ -611,8 +626,8 @@ namespace AccessiDownload
                 string mixId = ExtractCollectionId(url);
                 if (string.IsNullOrWhiteSpace(mixId))
                 {
-                    webView.CoreWebView2.Navigate(url);
-                    for (int i = 0; i < 24; i++)
+                    await NavigateAndWaitReadyAsync(url, log, token);
+                    for (int i = 0; i < 32; i++)
                     {
                         token.ThrowIfCancellationRequested();
                         string current = webView.Source == null ? string.Empty : webView.Source.AbsoluteUri;
@@ -627,15 +642,12 @@ namespace AccessiDownload
                         await Task.Delay(250, token);
                     }
                 }
-                else
-                {
-                    webView.CoreWebView2.Navigate(url);
-                }
 
                 if (string.IsNullOrWhiteSpace(mixId)) return null;
 
-                log?.Invoke("抖音合集：偵測到合集 ID " + mixId + "，正在取得作品清單。");
-                await Task.Delay(1000, token);
+                log?.Invoke("抖音合集：偵測到合集 ID " + mixId + "，正在建立穩定的抖音網頁環境。");
+                await EnsureDouyinPageReadyAsync(log, token);
+                log?.Invoke("抖音合集：抖音網頁環境已就緒，正在取得作品清單。");
 
                 string collectionName = null;
                 try
@@ -755,16 +767,127 @@ namespace AccessiDownload
                 return resolved;
             }
 
+            private async Task NavigateAndWaitReadyAsync(
+                string url,
+                Action<string> log,
+                CancellationToken token)
+            {
+                navigationCompleted = new TaskCompletionSource<bool>();
+                webView.CoreWebView2.Navigate(url);
+
+                Task navTask = navigationCompleted.Task;
+                Task timeout = Task.Delay(15000, token);
+                Task completed = await Task.WhenAny(navTask, timeout);
+                token.ThrowIfCancellationRequested();
+                if (completed != navTask)
+                    throw new TimeoutException("抖音網頁導覽逾時。");
+
+                await navigationCompleted.Task;
+                await WaitForDocumentReadyAsync(log, token);
+            }
+
+            private async Task EnsureDouyinPageReadyAsync(
+                Action<string> log,
+                CancellationToken token)
+            {
+                string current = webView.Source == null ? string.Empty : webView.Source.AbsoluteUri;
+                Uri uri;
+                bool onDouyin = Uri.TryCreate(current, UriKind.Absolute, out uri)
+                    && (uri.Host.Equals("douyin.com", StringComparison.OrdinalIgnoreCase)
+                        || uri.Host.EndsWith(".douyin.com", StringComparison.OrdinalIgnoreCase));
+
+                if (!onDouyin)
+                {
+                    log?.Invoke("抖音合集：目前 WebView2 不在抖音網域，切換到抖音首頁。");
+                    await NavigateAndWaitReadyAsync("https://www.douyin.com/", log, token);
+                }
+                else
+                {
+                    await WaitForDocumentReadyAsync(log, token);
+                }
+
+                string state = await GetPageStateAsync(token);
+                if (string.IsNullOrWhiteSpace(state)
+                    || state.IndexOf("https://www.douyin.com", StringComparison.OrdinalIgnoreCase) < 0)
+                {
+                    log?.Invoke("抖音合集：目前頁面狀態不穩定，重新載入抖音首頁。狀態：" + state);
+                    await NavigateAndWaitReadyAsync("https://www.douyin.com/", log, token);
+                    state = await GetPageStateAsync(token);
+                }
+
+                log?.Invoke("抖音合集：WebView2 頁面狀態=" + state);
+            }
+
+            private async Task WaitForDocumentReadyAsync(
+                Action<string> log,
+                CancellationToken token)
+            {
+                for (int i = 0; i < 40; i++)
+                {
+                    token.ThrowIfCancellationRequested();
+                    string raw;
+                    try
+                    {
+                        raw = await webView.ExecuteScriptAsync(
+                            "(()=>JSON.stringify({ready:document.readyState,origin:location.origin,href:location.href,body:!!document.body}))()");
+                    }
+                    catch
+                    {
+                        await Task.Delay(250, token);
+                        continue;
+                    }
+
+                    string inner;
+                    try { inner = json.Deserialize<string>(raw); }
+                    catch { inner = raw; }
+
+                    try
+                    {
+                        var state = json.Deserialize<Dictionary<string, object>>(inner);
+                        string ready = GetString(state, "ready");
+                        string origin = GetString(state, "origin");
+                        bool body = GetBool(state, "body");
+                        if (string.Equals(ready, "complete", StringComparison.OrdinalIgnoreCase)
+                            && body
+                            && origin.IndexOf("douyin.com", StringComparison.OrdinalIgnoreCase) >= 0)
+                            return;
+                    }
+                    catch { }
+
+                    await Task.Delay(250, token);
+                }
+
+                log?.Invoke("抖音合集：等待 document.readyState=complete 逾時。");
+                throw new TimeoutException("抖音網頁尚未完整載入。");
+            }
+
+            private async Task<string> GetPageStateAsync(CancellationToken token)
+            {
+                string raw = await webView.ExecuteScriptAsync(
+                    "(()=>JSON.stringify({ready:document.readyState,origin:location.origin,href:location.href}))()");
+                token.ThrowIfCancellationRequested();
+                string inner;
+                try { inner = json.Deserialize<string>(raw); }
+                catch { inner = raw; }
+                return inner;
+            }
+
             private async Task<string> FetchPageJsonAsync(string pathAndQuery, CancellationToken token)
             {
                 string encoded = json.Serialize(pathAndQuery);
                 string script =
                     "(async()=>{try{" +
-                    "const u=" + encoded + ";" +
-                    "const r=await window.fetch(u,{credentials:'include'});" +
+                    "const p=" + encoded + ";" +
+                    "const origin=location.origin||'';" +
+                    "if(!/https:\\/\\/(?:[^.]+\\.)?douyin\\.com$/i.test(origin))" +
+                    " return JSON.stringify({status:0,text:'',error:'wrong origin: '+origin,href:location.href,ready:document.readyState});" +
+                    "if(document.readyState!=='complete'||!document.body)" +
+                    " return JSON.stringify({status:0,text:'',error:'page not ready',href:location.href,ready:document.readyState});" +
+                    "const u=new URL(p,origin).href;" +
+                    "const r=await window.fetch(u,{credentials:'include',method:'GET'});" +
                     "const t=await r.text();" +
-                    "return JSON.stringify({status:r.status,text:t});" +
-                    "}catch(e){return JSON.stringify({status:0,text:'',error:String(e)});}})();";
+                    "return JSON.stringify({status:r.status,text:t,error:'',href:location.href,ready:document.readyState,url:u});" +
+                    "}catch(e){return JSON.stringify({status:0,text:'',error:(e&&e.stack)||String(e),href:location.href,ready:document.readyState});}})();";
 
                 string raw = await webView.ExecuteScriptAsync(script);
                 token.ThrowIfCancellationRequested();
@@ -776,11 +899,19 @@ namespace AccessiDownload
                 var wrapper = json.Deserialize<Dictionary<string, object>>(inner);
                 int status = GetInt(wrapper, "status");
                 string text = GetString(wrapper, "text");
+                string error = GetString(wrapper, "error");
+                string href = GetString(wrapper, "href");
+                string ready = GetString(wrapper, "ready");
+
                 if (status >= 200 && status < 300 && !string.IsNullOrWhiteSpace(text))
                     return text;
 
-                throw new InvalidOperationException(
-                    "抖音網頁 API 回應 " + status + "：" + pathAndQuery);
+                string detail = "抖音網頁 API 回應 " + status + "：" + pathAndQuery
+                    + "；頁面=" + href
+                    + "；readyState=" + ready;
+                if (!string.IsNullOrWhiteSpace(error))
+                    detail += "；JavaScript=" + error;
+                throw new InvalidOperationException(detail);
             }
 
             public async Task<DouyinResolvedMedia> ResolveAsync(
