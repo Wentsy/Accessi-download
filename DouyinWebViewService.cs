@@ -921,29 +921,85 @@ namespace AccessiDownload
 
             private async Task<string> FetchPageJsonAsync(string pathAndQuery, CancellationToken token)
             {
-                string encoded = json.Serialize(pathAndQuery);
-                string script =
-                    "(async()=>{try{" +
-                    "const p=" + encoded + ";" +
-                    "const origin=location.origin||'';" +
-                    "if(!/https:\\/\\/(?:[^.]+\\.)?douyin\\.com$/i.test(origin))" +
-                    " return JSON.stringify({status:0,text:'',error:'wrong origin: '+origin,href:location.href,ready:document.readyState});" +
-                    "if(!['interactive','complete'].includes(document.readyState)||!document.body)" +
-                    " return JSON.stringify({status:0,text:'',error:'page not ready',href:location.href,ready:document.readyState});" +
-                    "const u=new URL(p,origin).href;" +
-                    "const r=await window.fetch(u,{credentials:'include',method:'GET'});" +
-                    "const t=await r.text();" +
-                    "return JSON.stringify({status:r.status,text:t,error:'',href:location.href,ready:document.readyState,url:u});" +
-                    "}catch(e){return JSON.stringify({status:0,text:'',error:(e&&e.stack)||String(e),href:location.href,ready:document.readyState});}})();";
+                // CoreWebView2.ExecuteScriptAsync returns the immediate JavaScript
+                // expression result; it does not reliably await a Promise returned by
+                // an async IIFE. Store the async fetch result in window and poll it
+                // synchronously from C# instead.
+                string slot = "__ACCESSI_DOUYIN_FETCH_" + Guid.NewGuid().ToString("N");
+                string encodedPath = json.Serialize(pathAndQuery);
+                string encodedSlot = json.Serialize(slot);
 
-                string raw = await webView.ExecuteScriptAsync(script);
+                string startScript =
+                    "(()=>{try{" +
+                    "const key=" + encodedSlot + ";" +
+                    "const p=" + encodedPath + ";" +
+                    "const origin=location.origin||'';" +
+                    "window[key]=null;" +
+                    "const finish=(o)=>{try{window[key]=JSON.stringify(o);}catch(e){window[key]=JSON.stringify({status:0,text:'',error:'serialize: '+String(e),href:location.href,ready:document.readyState});}};" +
+                    "if(!/https:\\/\\/(?:[^.]+\\.)?douyin\\.com$/i.test(origin)){" +
+                    " finish({status:0,text:'',error:'wrong origin: '+origin,href:location.href,ready:document.readyState});return 'started';}" +
+                    "if(!['interactive','complete'].includes(document.readyState)||!document.body){" +
+                    " finish({status:0,text:'',error:'page not ready',href:location.href,ready:document.readyState});return 'started';}" +
+                    "const u=new URL(p,origin).href;" +
+                    "window.fetch(u,{credentials:'include',method:'GET'})" +
+                    ".then(async r=>{const t=await r.text();finish({status:r.status,text:t,error:'',href:location.href,ready:document.readyState,url:u});})" +
+                    ".catch(e=>finish({status:0,text:'',error:(e&&e.stack)||String(e),href:location.href,ready:document.readyState,url:u}));" +
+                    "return 'started';" +
+                    "}catch(e){try{window[" + encodedSlot + "]=JSON.stringify({status:0,text:'',error:(e&&e.stack)||String(e),href:location.href,ready:document.readyState});}catch(_){}return 'failed';}})()";
+
+                await webView.ExecuteScriptAsync(startScript);
                 token.ThrowIfCancellationRequested();
 
-                string inner;
-                try { inner = json.Deserialize<string>(raw); }
-                catch { inner = raw; }
+                Dictionary<string, object> wrapper = null;
+                string pollScript = "window[" + encodedSlot + "]";
+                try
+                {
+                    for (int i = 0; i < 150; i++)
+                    {
+                        token.ThrowIfCancellationRequested();
 
-                var wrapper = json.Deserialize<Dictionary<string, object>>(inner);
+                        string raw = await webView.ExecuteScriptAsync(pollScript);
+                        if (!string.IsNullOrWhiteSpace(raw)
+                            && !string.Equals(raw, "null", StringComparison.OrdinalIgnoreCase)
+                            && !string.Equals(raw, "undefined", StringComparison.OrdinalIgnoreCase))
+                        {
+                            string inner;
+                            try { inner = json.Deserialize<string>(raw); }
+                            catch { inner = raw; }
+
+                            if (!string.IsNullOrWhiteSpace(inner))
+                            {
+                                try
+                                {
+                                    wrapper = json.Deserialize<Dictionary<string, object>>(inner);
+                                    if (wrapper != null) break;
+                                }
+                                catch { }
+                            }
+                        }
+
+                        await Task.Delay(100, token);
+                    }
+                }
+                finally
+                {
+                    try
+                    {
+                        await webView.ExecuteScriptAsync(
+                            "(()=>{try{delete window[" + encodedSlot + "];}catch(e){}})()");
+                    }
+                    catch { }
+                }
+
+                if (wrapper == null)
+                {
+                    string state = string.Empty;
+                    try { state = await GetPageStateAsync(token); } catch { }
+                    throw new TimeoutException(
+                        "抖音網頁 API 等待回應逾時：" + pathAndQuery
+                        + (string.IsNullOrWhiteSpace(state) ? string.Empty : "；頁面狀態=" + state));
+                }
+
                 int status = GetInt(wrapper, "status");
                 string text = GetString(wrapper, "text");
                 string error = GetString(wrapper, "error");
