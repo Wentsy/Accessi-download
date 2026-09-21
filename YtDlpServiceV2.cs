@@ -43,6 +43,13 @@ namespace AccessiDownload
             args.Add("-N"); args.Add("4");
             args.Add("-P"); args.Add(request.DownloadFolder);
             args.Add("-o"); args.Add(BuildOutputTemplate(request));
+            if (request.DownloadPlaylist)
+            {
+                // yt-dlp supports a dedicated pl_video output template. This lets
+                // playlist/collection entries live in their own named folder while
+                // ordinary single-video URLs keep the normal flat output path.
+                args.Add("-o"); args.Add("pl_video:" + BuildPlaylistOutputTemplate(request));
+            }
             args.Add("--progress-template");
             args.Add("download:PROGRESS|%(info.title)s|%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s|%(info.playlist_index)s|%(info.playlist_count)s");
             args.Add("--print");
@@ -104,9 +111,20 @@ namespace AccessiDownload
         private string BuildOutputTemplate(DownloadRequest request)
         {
             string id = request.IncludeMediaId ? " [%(id)s]" : string.Empty;
+            return "%(title).160B" + id + ".%(ext)s";
+        }
+
+        private string BuildPlaylistOutputTemplate(DownloadRequest request)
+        {
+            string id = request.IncludeMediaId ? " [%(id)s]" : string.Empty;
             string file = "%(title).160B" + id + ".%(ext)s";
-            if (!request.DownloadPlaylist) return file;
-            return "%(playlist&{}/|)s%(playlist_index&{} - |)s" + file;
+
+            // Keep the path separator literal in the output template. Putting '/'
+            // inside a field replacement causes yt-dlp's filename sanitizer to
+            // treat it as filename content instead of a directory separator.
+            // playlist_title is preferred; playlist falls back to playlist_id when
+            // a site does not expose a human-readable title.
+            return "%(playlist_title,playlist)s/%(playlist_index)03d - " + file;
         }
 
         private List<string> BuildCommonArguments(AppSettings settings)
