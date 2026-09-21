@@ -184,7 +184,8 @@ namespace AccessiDownload
                 MessageBox.Show(this, summary, "缺少必要元件", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
-            if (!ConfirmBrowserCookieAccess()) return;
+            bool douyinOnly = urls.All(DouyinWebViewService.CanHandleUrl);
+            if (!douyinOnly && !ConfirmBrowserCookieAccess()) return;
 
             SaveSettingsFromUi();
             var request = new DownloadRequest
@@ -214,13 +215,9 @@ namespace AccessiDownload
             int lastAnnouncedPercent = -1;
             string lastProgressItemKey = null;
 
-            try
+            Action<DownloadProgress> progressHandler = progress => BeginInvokeIfRequired(() =>
             {
-                DownloadResult result = await service.DownloadAsync(
-                    request,
-                    progress => BeginInvokeIfRequired(() =>
-                    {
-                        int currentPercent = Math.Max(0, Math.Min(100, progress.Percent));
+                int currentPercent = Math.Max(0, Math.Min(100, progress.Percent));
                         string currentItemKey =
                             (progress.ItemIndex.HasValue ? progress.ItemIndex.Value.ToString() : "") + "/" +
                             (progress.ItemTotal.HasValue ? progress.ItemTotal.Value.ToString() : "") + "|" +
@@ -255,10 +252,33 @@ namespace AccessiDownload
                             : progress.PercentText.Trim();
                         if (!string.IsNullOrWhiteSpace(progress.SpeedText)) status += "，速度 " + progress.SpeedText;
                         if (!string.IsNullOrWhiteSpace(progress.EtaText) && !string.Equals(progress.EtaText, "NA", StringComparison.OrdinalIgnoreCase)) status += "，預估剩餘 " + progress.EtaText;
-                        UpdateProgressDisplay(progress, status, announceProgress);
-                    }),
-                    AppendLog,
-                    activeOperation.Token);
+                UpdateProgressDisplay(progress, status, announceProgress);
+            });
+
+            try
+            {
+                DownloadResult result;
+                if (douyinOnly)
+                {
+                    AppendLog("偵測到抖音網址：改用 WebView2 網頁解析模式，不依賴瀏覽器 cookies.txt。");
+                    using (var douyinService = new DouyinWebViewServiceDisposable())
+                    {
+                        result = await douyinService.Service.DownloadAsync(
+                            this,
+                            request,
+                            progressHandler,
+                            AppendLog,
+                            activeOperation.Token);
+                    }
+                }
+                else
+                {
+                    result = await service.DownloadAsync(
+                        request,
+                        progressHandler,
+                        AppendLog,
+                        activeOperation.Token);
+                }
 
                 CompleteProgressDisplay();
                 int count = result.FinalPaths.Count;
