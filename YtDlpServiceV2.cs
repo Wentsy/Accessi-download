@@ -112,7 +112,11 @@ namespace AccessiDownload
             args.Add("-P"); args.Add(targetFolder);
             args.Add("-o"); args.Add(BuildOutputTemplate(request));
             args.Add("--progress-template");
-            args.Add("download:PROGRESS|%(info.title)s|%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s|%(info.playlist_index)s|%(info.playlist_count)s");
+            // Keep non-ASCII titles out of the progress transport. On Windows yt-dlp
+            // can emit a title using a console code page even while the final path is
+            // valid UTF-8; mojibake can corrupt field boundaries and shift percent,
+            // speed and ETA. The accessible status only needs structured progress.
+            args.Add("download:PROGRESS|%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s|%(info.playlist_index)s|%(info.playlist_count)s");
             args.Add("--print");
             args.Add("after_move:RESULT|%(filepath)s");
             // --print implies yt-dlp quiet mode. Explicit --progress keeps custom
@@ -249,8 +253,7 @@ namespace AccessiDownload
         private string BuildOutputTemplate(DownloadRequest request)
         {
             string id = request.IncludeMediaId ? " [%(id)s]" : string.Empty;
-            string prefix = request.DownloadPlaylist ? "%(playlist_index&{} - |)s" : string.Empty;
-            return prefix + "%(title).160B" + id + ".%(ext)s";
+            return "%(title).160B" + id + ".%(ext)s";
         }
 
         private List<string> BuildCommonArguments(AppSettings settings)
@@ -361,18 +364,17 @@ namespace AccessiDownload
 
         private static DownloadProgress ParseProgress(string line)
         {
-            string[] p = line.Split(new[] { '|' }, 7);
-            string percentText = p.Length > 2 ? p[2].Trim() : string.Empty;
+            string[] p = line.Split(new[] { '|' }, 6);
+            string percentText = p.Length > 1 ? p[1].Trim() : string.Empty;
             double value;
             double.TryParse(percentText.Replace("%", "").Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out value);
             return new DownloadProgress
             {
-                ItemTitle = p.Length > 1 ? p[1].Trim() : string.Empty,
                 PercentText = percentText,
-                SpeedText = p.Length > 3 ? p[3].Trim() : string.Empty,
-                EtaText = p.Length > 4 ? p[4].Trim() : string.Empty,
-                ItemIndex = p.Length > 5 ? ParseNullableInt(p[5]) : null,
-                ItemTotal = p.Length > 6 ? ParseNullableInt(p[6]) : null,
+                SpeedText = p.Length > 2 ? p[2].Trim() : string.Empty,
+                EtaText = p.Length > 3 ? p[3].Trim() : string.Empty,
+                ItemIndex = p.Length > 4 ? ParseNullableInt(p[4]) : null,
+                ItemTotal = p.Length > 5 ? ParseNullableInt(p[5]) : null,
                 Percent = Math.Max(0, Math.Min(100, (int)Math.Round(value)))
             };
         }
