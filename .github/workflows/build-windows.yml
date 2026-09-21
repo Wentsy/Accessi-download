@@ -42,6 +42,21 @@ jobs:
           $exeConfig = $exe.FullName + ".config"
           if (Test-Path $exeConfig) { Copy-Item $exeConfig (Join-Path $package "Accessi-download.exe.config") }
 
+          # Copy managed/native runtime dependencies produced by NuGet (WebView2).
+          $outputDir = $exe.Directory.FullName
+          Get-ChildItem -Path $outputDir -Filter "*.dll" -File | ForEach-Object {
+            Copy-Item $_.FullName (Join-Path $package $_.Name)
+          }
+          $webViewLoader = Get-ChildItem -Path $outputDir -Filter "WebView2Loader.dll" -Recurse -File |
+            Where-Object { $_.FullName -match "[\\/]x64[\\/]" } |
+            Select-Object -First 1
+          if (-not $webViewLoader) {
+            $webViewLoader = Get-ChildItem -Path $outputDir -Filter "WebView2Loader.dll" -Recurse -File | Select-Object -First 1
+          }
+          if ($webViewLoader) {
+            Copy-Item $webViewLoader.FullName (Join-Path $package "WebView2Loader.dll") -Force
+          }
+
           Copy-Item "$PWD\README.md" $package
           Copy-Item "$PWD\THIRD_PARTY_NOTICES.md" $package
           Copy-Item "$PWD\docs\ACCESSIBILITY.md" (Join-Path $package "ACCESSIBILITY.md")
