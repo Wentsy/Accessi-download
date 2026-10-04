@@ -6,14 +6,10 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net;
-using System.Net.Http;
-using System.Net.Security;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Security.Authentication;
-using System.Security.Cryptography.X509Certificates;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
 using Microsoft.Web.WebView2.Core;
@@ -799,97 +795,53 @@ namespace AccessiDownload
                     || !CanHandleUrl(inputUrl))
                     throw new InvalidOperationException("小紅書網址格式不正確。");
 
+                // 直連通道（XhsDirectTlsFetcher）會跟完 HTTP 3xx，
+                // 這層迴圈只處理頁內 JS 跳轉與登入頁攜帶的真實筆記址。
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 for (int hop = 0; hop < 8; hop++)
                 {
                     token.ThrowIfCancellationRequested();
                     log?.Invoke("小紅書 HTTP 導覽：" + current.AbsoluteUri);
+                    if (!seen.Add(current.AbsoluteUri))
+                        throw new InvalidOperationException("小紅書 HTTP 重新導向次數過多。");
 
-                    using (var handler = new HttpClientHandler())
+                    XhsDirectTlsFetcher.FetchResult fetched =
+                        await XhsDirectTlsFetcher.GetAsync(
+                            current.AbsoluteUri,
+                            userAgent,
+                            "https://www.xiaohongshu.com/",
+                            CanHandleUrl,
+                            token);
+
+                    Uri finalUri = new Uri(fetched.FinalUrl);
+
+                    Uri htmlRedirect = ExtractHttpHtmlRedirect(fetched.Body, finalUri);
+                    if (htmlRedirect != null
+                        && !string.Equals(
+                            htmlRedirect.AbsoluteUri,
+                            finalUri.AbsoluteUri,
+                            StringComparison.OrdinalIgnoreCase))
                     {
-                        handler.AllowAutoRedirect = false;
-                        handler.AutomaticDecompression =
-                            DecompressionMethods.GZip | DecompressionMethods.Deflate;
-                        handler.UseCookies = false;
-                        // XHS currently accepts TLS 1.2, and .NET Framework can otherwise
-                        // surface the TLS negotiation failure only as a generic
-                        // "An error occurred while sending the request".
-                        handler.SslProtocols = SslProtocols.Tls12;
-                        handler.ServerCertificateCustomValidationCallback =
-                            ValidateXhsServerCertificate;
-
-                        using (var client = new HttpClient(handler))
-                        using (var httpRequest = new HttpRequestMessage(HttpMethod.Get, current))
-                        {
-                            client.Timeout = TimeSpan.FromSeconds(20);
-
-                            httpRequest.Headers.UserAgent.ParseAdd(userAgent);
-                            httpRequest.Headers.Accept.ParseAdd(
-                                "text/html,application/xhtml+xml,application/xml;q=0.9,"
-                                + "image/avif,image/webp,image/apng,*/*;q=0.8");
-                            httpRequest.Headers.AcceptLanguage.ParseAdd("zh-CN,zh;q=0.9,en;q=0.8");
-                            httpRequest.Headers.Referrer = new Uri("https://www.xiaohongshu.com/");
-
-                            using (HttpResponseMessage response = await client.SendAsync(
-                                httpRequest,
-                                HttpCompletionOption.ResponseHeadersRead,
-                                token))
-                            {
-                                int status = (int)response.StatusCode;
-
-                                if (status >= 300 && status < 400)
-                                {
-                                    Uri next = response.Headers.Location;
-                                    if (next == null)
-                                        throw new InvalidOperationException(
-                                            "小紅書重新導向沒有提供目的網址。");
-
-                                    if (!next.IsAbsoluteUri)
-                                        next = new Uri(current, next);
-
-                                    if (!CanHandleUrl(next.AbsoluteUri))
-                                        throw new InvalidOperationException(
-                                            "小紅書重新導向到不受支援的網域：" + next.Host);
-
-                                    current = next;
-                                    continue;
-                                }
-
-                                if (status < 200 || status >= 300)
-                                    throw new InvalidOperationException(
-                                        "小紅書網頁回應 HTTP " + status + "。");
-
-                                string html = await response.Content.ReadAsStringAsync();
-
-                                Uri htmlRedirect = ExtractHttpHtmlRedirect(html, current);
-                                if (htmlRedirect != null
-                                    && !string.Equals(
-                                        htmlRedirect.AbsoluteUri,
-                                        current.AbsoluteUri,
-                                        StringComparison.OrdinalIgnoreCase))
-                                {
-                                    current = htmlRedirect;
-                                    continue;
-                                }
-
-                                // Some login pages carry the real note URL in redirectPath.
-                                // Follow it so the mobile retry can request the actual note.
-                                Uri loginRedirect = ExtractLoginRedirect(current);
-                                if (loginRedirect != null)
-                                {
-                                    current = loginRedirect;
-                                    continue;
-                                }
-
-                                XhsPageData data = ParseHttpInitialState(html, current.AbsoluteUri);
-                                if (data != null && !string.IsNullOrWhiteSpace(data.VideoUrl))
-                                    return data;
-
-                                // A successful HTML response without media is still useful
-                                // information, but the caller will retry with the other UA.
-                                return null;
-                            }
-                        }
+                        current = htmlRedirect;
+                        continue;
                     }
+
+                    // Some login pages carry the real note URL in redirectPath.
+                    // Follow it so the mobile retry can request the actual note.
+                    Uri loginRedirect = ExtractLoginRedirect(finalUri);
+                    if (loginRedirect != null)
+                    {
+                        current = loginRedirect;
+                        continue;
+                    }
+
+                    XhsPageData data = ParseHttpInitialState(fetched.Body, fetched.FinalUrl);
+                    if (data != null && !string.IsNullOrWhiteSpace(data.VideoUrl))
+                        return data;
+
+                    // A successful HTML response without media is still useful
+                    // information, but the caller will retry with the other UA.
+                    return null;
                 }
 
                 throw new InvalidOperationException("小紅書 HTTP 重新導向次數過多。");
@@ -1212,69 +1164,6 @@ namespace AccessiDownload
                 return string.Join(" -> ", parts);
             }
 
-            private static bool ValidateXhsServerCertificate(
-                HttpRequestMessage request,
-                X509Certificate2 certificate,
-                X509Chain chain,
-                SslPolicyErrors sslErrors)
-            {
-                if (sslErrors == SslPolicyErrors.None) return true;
-                if (request == null || request.RequestUri == null || certificate == null) return false;
-
-                string host = (request.RequestUri.Host ?? string.Empty).ToLowerInvariant();
-                if (!IsTrustedPageHost(host)) return false;
-
-                // Never override hostname mismatch or missing certificates.
-                if ((sslErrors & SslPolicyErrors.RemoteCertificateNameMismatch) != 0
-                    || (sslErrors & SslPolicyErrors.RemoteCertificateNotAvailable) != 0)
-                    return false;
-
-                // Only tolerate a chain-trust problem. The certificate itself must still
-                // be currently valid, match the requested host, and come from a known
-                // public CA family used by XHS.
-                if ((sslErrors & SslPolicyErrors.RemoteCertificateChainErrors) == 0)
-                    return false;
-
-                DateTime now = DateTime.UtcNow;
-                if (now < certificate.NotBefore.ToUniversalTime()
-                    || now > certificate.NotAfter.ToUniversalTime())
-                    return false;
-
-                string dnsName;
-                try { dnsName = certificate.GetNameInfo(X509NameType.DnsName, false); }
-                catch { return false; }
-
-                if (!MatchesDnsName(host, dnsName)) return false;
-
-                string issuer = certificate.Issuer ?? string.Empty;
-                return issuer.IndexOf("DNSPod", StringComparison.OrdinalIgnoreCase) >= 0
-                    || issuer.IndexOf("DigiCert", StringComparison.OrdinalIgnoreCase) >= 0;
-            }
-
-            private static bool IsTrustedPageHost(string host)
-            {
-                return host == "www.xiaohongshu.com"
-                    || host == "xiaohongshu.com"
-                    || host == "www.rednote.com"
-                    || host == "rednote.com";
-            }
-
-            private static bool MatchesDnsName(string host, string dnsName)
-            {
-                if (string.IsNullOrWhiteSpace(host) || string.IsNullOrWhiteSpace(dnsName))
-                    return false;
-
-                host = host.TrimEnd('.').ToLowerInvariant();
-                dnsName = dnsName.TrimEnd('.').ToLowerInvariant();
-
-                if (dnsName == host) return true;
-                if (!dnsName.StartsWith("*.", StringComparison.Ordinal)) return false;
-
-                string suffix = dnsName.Substring(1);
-                return host.EndsWith(suffix, StringComparison.Ordinal)
-                    && host.IndexOf('.') == host.Length - suffix.Length;
-            }
-
             private const string DesktopUserAgentForHttp =
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                 + "(KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36";
@@ -1305,12 +1194,17 @@ namespace AccessiDownload
                 if (string.IsNullOrWhiteSpace(url)) return false;
                 Uri uri;
                 if (!Uri.TryCreate(url, UriKind.Absolute, out uri)) return false;
-                if (!uri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase)) return false;
 
                 string host = (uri.Host ?? string.Empty).ToLowerInvariant();
-                return host == "sns-video-bd.xhscdn.com"
+                bool isCdn = host == "sns-video-bd.xhscdn.com"
                     || host.EndsWith(".xhscdn.com", StringComparison.OrdinalIgnoreCase)
                     || host.EndsWith(".rednotecdn.com", StringComparison.OrdinalIgnoreCase);
+                if (!isCdn) return false;
+
+                // 小紅書影片直鏈實測就是 http（masterUrl/backupUrls），
+                // CDN 主機放行 http/https，照樣只認這兩家網域。
+                return uri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase)
+                    || uri.Scheme.Equals("http", StringComparison.OrdinalIgnoreCase);
             }
 
             private string DeserializeString(string raw)
