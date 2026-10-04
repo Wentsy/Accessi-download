@@ -6,12 +6,12 @@
 
 ## 目前功能
 
-目前穩定基準：**v0.2.20**；v0.2.21 新增小紅書影片下載，待實機驗收。
+目前穩定基準：**v0.2.20**；v0.2.22 為小紅書解析修正版，待實機驗收。
 
 - Windows 10 / 11 x64 綠色免安裝版。
 - 原生 WinForms 介面，優先支援 NVDA 與完整鍵盤操作。
 - 明確支援 YouTube、Bilibili、Douyin、小紅書影片，以及 yt-dlp 可處理的其他網站。
-- 小紅書影片使用專用 WebView2 網頁解析引擎，支援公開影片筆記與 `xhslink.cn` / `xhslink.com` 分享短網址；優先從筆記頁狀態取得 `originVideoKey`，不依賴瀏覽器 cookies.txt。
+- 小紅書影片使用 HTTP 優先、WebView2 備援的專用解析流程，支援公開影片筆記與 `xhslink.cn` / `xhslink.com` 分享短網址；會先嘗試桌面頁，再切換行動版頁面，優先從筆記頁狀態取得 `originVideoKey`，不依賴瀏覽器 cookies.txt。
 - Douyin 使用專用 WebView2 網頁解析引擎，支援單支影片、分享短網址、批量網址與合集下載，不再依賴 yt-dlp 的抖音 Cookie 流程。
 - 不需要先「取得影片資訊」：貼上網址後可直接下載。
 - 影片：
