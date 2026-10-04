@@ -185,7 +185,8 @@ namespace AccessiDownload
                 return;
             }
             bool douyinOnly = urls.All(DouyinWebViewService.CanHandleUrl);
-            if (!douyinOnly && !ConfirmBrowserCookieAccess()) return;
+            bool xhsOnly = urls.All(XhsWebViewService.CanHandleUrl);
+            if (!douyinOnly && !xhsOnly && !ConfirmBrowserCookieAccess()) return;
 
             SaveSettingsFromUi();
             var request = new DownloadRequest
@@ -263,6 +264,17 @@ namespace AccessiDownload
                     AppendLog("偵測到抖音網址：改用 WebView2 網頁解析模式，不依賴瀏覽器 cookies.txt。");
                     var douyinService = new DouyinWebViewService();
                     result = await douyinService.DownloadAsync(
+                        this,
+                        request,
+                        progressHandler,
+                        AppendLog,
+                        activeOperation.Token);
+                }
+                else if (xhsOnly)
+                {
+                    AppendLog("偵測到小紅書網址：改用 WebView2 網頁解析模式，直接從公開筆記頁取得影片資料。");
+                    var xhsService = new XhsWebViewService();
+                    result = await xhsService.DownloadAsync(
                         this,
                         request,
                         progressHandler,
