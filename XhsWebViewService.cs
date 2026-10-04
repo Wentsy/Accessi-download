@@ -507,11 +507,32 @@ namespace AccessiDownload
                 if (!initialized)
                     throw new InvalidOperationException("小紅書 WebView2 尚未初始化。");
 
+                // HTTP-first is important for XHS: some note pages redirect desktop
+                // visitors to login while the mobile web still renders the public note.
+                try
+                {
+                    XhsPageData httpData = await ResolveWithHttpAsync(url, log, token);
+                    if (httpData != null && !string.IsNullOrWhiteSpace(httpData.VideoUrl))
+                    {
+                        log?.Invoke("小紅書 HTTP 解析成功，未使用瀏覽器頁面。");
+                        return new XhsResolvedMedia
+                        {
+                            Id = httpData.Id,
+                            Title = httpData.Title,
+                            VideoUrl = httpData.VideoUrl,
+                            SourcePageUrl = httpData.SourcePageUrl
+                        };
+                    }
+                }
+                catch (Exception ex) when (!(ex is OperationCanceledException))
+                {
+                    log?.Invoke("小紅書 HTTP 解析未成功，改用 WebView2： " + ex.Message);
+                }
+
                 await NavigateAndWaitReadyAsync(url, log, token);
 
-                // Short links can finish their redirect before the page itself has
-                // populated __INITIAL_STATE__. Poll the actual target note for a
-                // bounded period instead of depending on one NavigationCompleted event.
+                // Keep the WebView2 path as a final fallback for page structures
+                // that expose the media only after client-side rendering.
                 for (int i = 0; i < 80; i++)
                 {
                     token.ThrowIfCancellationRequested();
@@ -732,6 +753,425 @@ namespace AccessiDownload
 
                 return data;
             }
+
+            private async Task<XhsPageData> ResolveWithHttpAsync(
+                string inputUrl,
+                Action<string> log,
+                CancellationToken token)
+            {
+                Exception lastError = null;
+                string[] userAgents = { DesktopUserAgentForHttp, MobileUserAgentForHttp };
+
+                foreach (string userAgent in userAgents)
+                {
+                    try
+                    {
+                        XhsPageData data = await ResolveHttpWithUserAgentAsync(
+                            inputUrl, userAgent, log, token);
+                        if (data != null && !string.IsNullOrWhiteSpace(data.VideoUrl))
+                            return data;
+                    }
+                    catch (Exception ex) when (!(ex is OperationCanceledException))
+                    {
+                        lastError = ex;
+                        log?.Invoke("小紅書 HTTP " +
+                            (userAgent == MobileUserAgentForHttp ? "行動版" : "桌面版")
+                            + "解析失敗：" + ex.Message);
+                    }
+                }
+
+                if (lastError != null) throw lastError;
+                return null;
+            }
+
+            private async Task<XhsPageData> ResolveHttpWithUserAgentAsync(
+                string inputUrl,
+                string userAgent,
+                Action<string> log,
+                CancellationToken token)
+            {
+                Uri current;
+                if (!Uri.TryCreate(inputUrl, UriKind.Absolute, out current)
+                    || !CanHandleUrl(inputUrl))
+                    throw new InvalidOperationException("小紅書網址格式不正確。");
+
+                for (int hop = 0; hop < 8; hop++)
+                {
+                    token.ThrowIfCancellationRequested();
+                    log?.Invoke("小紅書 HTTP 導覽：" + current.AbsoluteUri);
+
+                    var request = WebRequest.CreateHttp(current);
+                    request.Method = "GET";
+                    request.AllowAutoRedirect = false;
+                    request.UserAgent = userAgent;
+                    request.Accept =
+                        "text/html,application/xhtml+xml,application/xml;q=0.9,"
+                        + "image/avif,image/webp,image/apng,*/*;q=0.8";
+                    request.Headers[HttpRequestHeader.AcceptLanguage] = "zh-CN,zh;q=0.9,en;q=0.8";
+                    request.Referer = "https://www.xiaohongshu.com/";
+                    request.AutomaticDecompression =
+                        DecompressionMethods.GZip | DecompressionMethods.Deflate;
+                    request.Timeout = 20000;
+                    request.ReadWriteTimeout = 20000;
+
+                    using (token.Register(() => { try { request.Abort(); } catch { } }))
+                    using (var response = (System.Net.HttpWebResponse)await request.GetResponseAsync())
+                    {
+                        int status = (int)response.StatusCode;
+                        if (status >= 300 && status < 400)
+                        {
+                            string location = response.Headers[HttpResponseHeader.Location];
+                            if (string.IsNullOrWhiteSpace(location))
+                                throw new InvalidOperationException("小紅書重新導向沒有提供目的網址。");
+
+                            Uri next = new Uri(current, location);
+                            if (!CanHandleUrl(next.AbsoluteUri))
+                                throw new InvalidOperationException(
+                                    "小紅書重新導向到不受支援的網域：" + next.Host);
+
+                            current = next;
+                            continue;
+                        }
+
+                        if (status < 200 || status >= 300)
+                            throw new InvalidOperationException(
+                                "小紅書網頁回應 HTTP " + status + "。");
+
+                        string html;
+                        using (Stream stream = response.GetResponseStream())
+                        using (var reader = new StreamReader(stream, Encoding.UTF8, true))
+                        {
+                            html = await reader.ReadToEndAsync();
+                        }
+
+                        Uri htmlRedirect = ExtractHttpHtmlRedirect(html, current);
+                        if (htmlRedirect != null
+                            && !string.Equals(
+                                htmlRedirect.AbsoluteUri,
+                                current.AbsoluteUri,
+                                StringComparison.OrdinalIgnoreCase))
+                        {
+                            current = htmlRedirect;
+                            continue;
+                        }
+
+                        // Some login pages carry the real note URL in redirectPath.
+                        // Follow it so the mobile retry can request the actual note.
+                        Uri loginRedirect = ExtractLoginRedirect(current);
+                        if (loginRedirect != null)
+                        {
+                            current = loginRedirect;
+                            continue;
+                        }
+
+                        XhsPageData data = ParseHttpInitialState(html, current.AbsoluteUri);
+                        if (data != null && !string.IsNullOrWhiteSpace(data.VideoUrl))
+                            return data;
+
+                        // A successful HTML response without media is still useful
+                        // information, but the caller will retry with the other UA.
+                        return null;
+                    }
+                }
+
+                throw new InvalidOperationException("小紅書 HTTP 重新導向次數過多。");
+            }
+
+            private XhsPageData ParseHttpInitialState(string html, string sourceUrl)
+            {
+                if (string.IsNullOrWhiteSpace(html)) return null;
+
+                Match match = Regex.Match(
+                    html,
+                    @"window\.__INITIAL_STATE__\s*=\s*(.*?)</script>",
+                    RegexOptions.IgnoreCase | RegexOptions.Singleline);
+
+                if (!match.Success) return null;
+
+                string stateText = match.Groups[1].Value
+                    .Trim()
+                    .TrimEnd(';')
+                    .Replace("undefined", "null");
+
+                Dictionary<string, object> state;
+                try
+                {
+                    state = json.Deserialize<Dictionary<string, object>>(stateText);
+                }
+                catch
+                {
+                    return null;
+                }
+
+                Dictionary<string, object> note = FindHttpNote(state, sourceUrl);
+                if (note == null) return null;
+
+                string id = GetString(note, "noteId");
+                if (string.IsNullOrWhiteSpace(id)) id = GetString(note, "note_id");
+                if (string.IsNullOrWhiteSpace(id)) id = ExtractHttpNoteId(sourceUrl);
+
+                string title = GetString(note, "title");
+                if (string.IsNullOrWhiteSpace(title))
+                    title = GetString(note, "displayTitle");
+                if (string.IsNullOrWhiteSpace(title))
+                {
+                    Match titleMatch = Regex.Match(
+                        html,
+                        @"<title[^>]*>(.*?)</title>",
+                        RegexOptions.IgnoreCase | RegexOptions.Singleline);
+                    if (titleMatch.Success)
+                    {
+                        title = System.Net.WebUtility.HtmlDecode(titleMatch.Groups[1].Value)
+                            .Trim();
+                        title = Regex.Replace(
+                            title,
+                            @"\s*[-|·]\s*(小红书|RedNote)\s*$",
+                            string.Empty,
+                            RegexOptions.IgnoreCase).Trim();
+                    }
+                }
+
+                var candidates = new List<string>();
+                Dictionary<string, object> video = GetDictionary(note, "video");
+                Dictionary<string, object> consumer = GetDictionary(video, "consumer");
+
+                AddHttpOriginCandidate(candidates, GetString(consumer, "originVideoKey"));
+                AddHttpOriginCandidate(candidates, GetString(video, "originVideoKey"));
+                AddHttpCandidate(candidates, GetString(video, "originVideoUrl"));
+                AddHttpCandidate(candidates, GetString(video, "url"));
+                AddHttpCandidate(candidates, GetString(video, "videoUrl"));
+
+                AddHttpStreamCandidates(
+                    candidates,
+                    GetDictionary(GetDictionary(video, "media"), "stream"));
+                AddHttpStreamCandidates(
+                    candidates,
+                    GetDictionary(GetDictionary(video, "mediaV2"), "stream"));
+
+                string best = candidates
+                    .Where(IsTrustedMediaUrl)
+                    .OrderByDescending(ScoreHttpVideoUrl)
+                    .FirstOrDefault();
+
+                if (string.IsNullOrWhiteSpace(best)) return null;
+
+                return new XhsPageData
+                {
+                    Id = id,
+                    Title = title,
+                    Type = GetString(note, "type"),
+                    VideoUrl = best,
+                    SourcePageUrl = sourceUrl
+                };
+            }
+
+            private static Dictionary<string, object> FindHttpNote(
+                Dictionary<string, object> state,
+                string sourceUrl)
+            {
+                if (state == null) return null;
+
+                Dictionary<string, object> noteData = GetDictionary(state, "noteData");
+                Dictionary<string, object> noteDataData = GetDictionary(noteData, "data");
+                Dictionary<string, object> directNote = GetDictionary(noteDataData, "noteData");
+                if (directNote != null) return directNote;
+
+                Dictionary<string, object> noteRoot = GetDictionary(state, "note");
+                Dictionary<string, object> detailMap = GetDictionary(noteRoot, "noteDetailMap");
+                if (detailMap == null) detailMap = GetDictionary(noteRoot, "detailMap");
+                if (detailMap == null) return null;
+
+                string noteId = ExtractHttpNoteId(sourceUrl);
+                if (!string.IsNullOrWhiteSpace(noteId))
+                {
+                    Dictionary<string, object> entry = GetDictionary(detailMap, noteId);
+                    if (entry != null)
+                    {
+                        Dictionary<string, object> nested = GetDictionary(entry, "note");
+                        return nested ?? entry;
+                    }
+                }
+
+                foreach (object value in detailMap.Values)
+                {
+                    Dictionary<string, object> entry = value as Dictionary<string, object>;
+                    if (entry == null) continue;
+                    Dictionary<string, object> nested = GetDictionary(entry, "note");
+                    return nested ?? entry;
+                }
+
+                return null;
+            }
+
+            private static Dictionary<string, object> GetDictionary(
+                Dictionary<string, object> data,
+                string key)
+            {
+                if (data == null) return null;
+                object value;
+                return data.TryGetValue(key, out value)
+                    ? value as Dictionary<string, object>
+                    : null;
+            }
+
+            private static void AddHttpOriginCandidate(
+                List<string> candidates,
+                string key)
+            {
+                if (string.IsNullOrWhiteSpace(key)) return;
+                AddHttpCandidate(
+                    candidates,
+                    "https://sns-video-bd.xhscdn.com/"
+                    + key.Trim().TrimStart('/'));
+            }
+
+            private static void AddHttpCandidate(
+                List<string> candidates,
+                string url)
+            {
+                if (string.IsNullOrWhiteSpace(url)
+                    || !IsTrustedMediaUrl(url)
+                    || candidates.Any(x => string.Equals(
+                        x, url, StringComparison.OrdinalIgnoreCase)))
+                    return;
+
+                candidates.Add(url);
+            }
+
+            private static void AddHttpStreamCandidates(
+                List<string> candidates,
+                Dictionary<string, object> stream)
+            {
+                if (stream == null) return;
+
+                foreach (object rawArray in stream.Values)
+                {
+                    var array = rawArray as IEnumerable;
+                    if (array == null || rawArray is string) continue;
+
+                    foreach (object rawItem in array)
+                    {
+                        Dictionary<string, object> item =
+                            rawItem as Dictionary<string, object>;
+                        if (item == null) continue;
+
+                        AddHttpCandidate(candidates, GetString(item, "masterUrl"));
+                        AddHttpCandidate(candidates, GetString(item, "url"));
+
+                        object backups;
+                        if (item.TryGetValue("backupUrls", out backups))
+                        {
+                            var backupArray = backups as IEnumerable;
+                            if (backupArray != null && !(backups is string))
+                            {
+                                foreach (object backup in backupArray)
+                                    AddHttpCandidate(
+                                        candidates,
+                                        Convert.ToString(
+                                            backup,
+                                            CultureInfo.InvariantCulture));
+                            }
+                        }
+                    }
+                }
+            }
+
+            private static int ScoreHttpVideoUrl(string url)
+            {
+                string lower = (url ?? string.Empty).ToLowerInvariant();
+                int score = 0;
+                if (lower.Contains("sns-video-bd.xhscdn.com")) score += 100;
+                if (lower.Contains("origin")) score += 50;
+                if (lower.Contains("h265")) score += 10;
+                if (lower.EndsWith(".mp4")) score += 50;
+                if (lower.Contains(".m3u8")) score -= 100;
+                return score;
+            }
+
+            private static string ExtractHttpNoteId(string url)
+            {
+                Match match = Regex.Match(
+                    url ?? string.Empty,
+                    @"/(?:explore|discovery/item)/([^/?]+)",
+                    RegexOptions.IgnoreCase);
+                return match.Success ? match.Groups[1].Value : string.Empty;
+            }
+
+            private static Uri ExtractHttpHtmlRedirect(string html, Uri current)
+            {
+                if (string.IsNullOrWhiteSpace(html)) return null;
+
+                Match match = Regex.Match(
+                    html,
+                    @"window\.location(?:\.href)?\s*=\s*['""]([^'""]+)['""]",
+                    RegexOptions.IgnoreCase);
+                if (!match.Success)
+                {
+                    match = Regex.Match(
+                        html,
+                        @"window\.location\.replace\(\s*['""]([^'""]+)['""]\s*\)",
+                        RegexOptions.IgnoreCase);
+                }
+
+                if (!match.Success) return null;
+
+                try
+                {
+                    Uri target = new Uri(
+                        current,
+                        System.Net.WebUtility.HtmlDecode(match.Groups[1].Value));
+                    return CanHandleUrl(target.AbsoluteUri) ? target : null;
+                }
+                catch
+                {
+                    return null;
+                }
+            }
+
+            private static Uri ExtractLoginRedirect(Uri current)
+            {
+                try
+                {
+                    if (!current.AbsolutePath.Equals(
+                        "/login",
+                        StringComparison.OrdinalIgnoreCase))
+                        return null;
+
+                    foreach (string part in current.Query.TrimStart('?').Split('&'))
+                    {
+                        int equals = part.IndexOf('=');
+                        if (equals <= 0) continue;
+
+                        string key = Uri.UnescapeDataString(
+                            part.Substring(0, equals));
+                        if (!string.Equals(
+                            key,
+                            "redirectPath",
+                            StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        string value = Uri.UnescapeDataString(
+                            part.Substring(equals + 1));
+                        Uri target;
+                        if (!Uri.TryCreate(value, UriKind.Absolute, out target))
+                            return null;
+
+                        return CanHandleUrl(target.AbsoluteUri) ? target : null;
+                    }
+                }
+                catch { }
+
+                return null;
+            }
+
+            private const string DesktopUserAgentForHttp =
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                + "(KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36";
+
+            private const string MobileUserAgentForHttp =
+                "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+                + "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 "
+                + "Mobile/15E148 Safari/604.1";
 
             private string GetCurrentUrl()
             {
