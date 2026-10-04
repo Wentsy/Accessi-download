@@ -1046,7 +1046,7 @@ namespace AccessiDownload
 
                 foreach (object rawArray in stream.Values)
                 {
-                    var array = rawArray as IEnumerable;
+                    var array = rawArray as System.Collections.IEnumerable;
                     if (array == null || rawArray is string) continue;
 
                     foreach (object rawItem in array)
@@ -1061,7 +1061,7 @@ namespace AccessiDownload
                         object backups;
                         if (item.TryGetValue("backupUrls", out backups))
                         {
-                            var backupArray = backups as System.Collections.IEnumerable;
+                            var backupArray = backups as System.Collections.System.Collections.IEnumerable;
                             if (backupArray != null && !(backups is string))
                             {
                                 foreach (object backup in backupArray)
