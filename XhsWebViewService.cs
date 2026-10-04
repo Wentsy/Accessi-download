@@ -1061,7 +1061,7 @@ namespace AccessiDownload
                         object backups;
                         if (item.TryGetValue("backupUrls", out backups))
                         {
-                            var backupArray = backups as System.Collections.System.Collections.IEnumerable;
+                            var backupArray = backups as System.Collections.IEnumerable;
                             if (backupArray != null && !(backups is string))
                             {
                                 foreach (object backup in backupArray)
