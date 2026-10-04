@@ -12,6 +12,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
@@ -779,7 +780,7 @@ namespace AccessiDownload
                         lastError = ex;
                         log?.Invoke("小紅書 HTTP " +
                             (userAgent == MobileUserAgentForHttp ? "行動版" : "桌面版")
-                            + "解析失敗：" + ex.Message);
+                            + "解析失敗：" + FormatHttpException(ex));
                     }
                 }
 
@@ -809,6 +810,10 @@ namespace AccessiDownload
                         handler.AutomaticDecompression =
                             DecompressionMethods.GZip | DecompressionMethods.Deflate;
                         handler.UseCookies = false;
+                        // XHS currently accepts TLS 1.2, and .NET Framework can otherwise
+                        // surface the TLS negotiation failure only as a generic
+                        // "An error occurred while sending the request".
+                        handler.SslProtocols = SslProtocols.Tls12;
                         handler.ServerCertificateCustomValidationCallback =
                             ValidateXhsServerCertificate;
 
@@ -1175,6 +1180,36 @@ namespace AccessiDownload
                 catch { }
 
                 return null;
+            }
+
+            private static string FormatHttpException(Exception ex)
+            {
+                if (ex == null) return "未知網路錯誤";
+
+                var parts = new List<string>();
+                Exception current = ex;
+                int depth = 0;
+
+                while (current != null && depth < 6)
+                {
+                    var webException = current as WebException;
+                    if (webException != null)
+                    {
+                        parts.Add(
+                            current.GetType().Name
+                            + ": " + current.Message
+                            + " [Status=" + webException.Status + "]");
+                    }
+                    else
+                    {
+                        parts.Add(current.GetType().Name + ": " + current.Message);
+                    }
+
+                    current = current.InnerException;
+                    depth++;
+                }
+
+                return string.Join(" -> ", parts);
             }
 
             private static bool ValidateXhsServerCertificate(
